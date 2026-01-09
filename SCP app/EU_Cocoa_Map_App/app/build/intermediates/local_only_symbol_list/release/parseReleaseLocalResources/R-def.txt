@@ -1,0 +1,15 @@
+R_DEF: Internal format may change without notice
+local
+color brown_primary
+drawable ic_launcher_background
+drawable splash_bg
+drawable splash_image
+id splashLogo
+layout activity_main
+layout activity_splash
+mipmap ic_launcher
+mipmap ic_launcher_foreground
+mipmap ic_launcher_round
+string app_name
+style Theme.EUCocoaMap
+style Theme.EUCocoaMap.Splash

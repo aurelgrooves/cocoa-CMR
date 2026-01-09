@@ -1,0 +1,10 @@
+[
+    {
+        "merged": "com.example.eucocoamap.app-mergeReleaseResources-35:/layout/activity_splash.xml",
+        "source": "com.example.eucocoamap.app-main-37:/layout/activity_splash.xml"
+    },
+    {
+        "merged": "com.example.eucocoamap.app-mergeReleaseResources-35:/layout/activity_main.xml",
+        "source": "com.example.eucocoamap.app-main-37:/layout/activity_main.xml"
+    }
+]

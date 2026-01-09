@@ -1,0 +1,19 @@
+<lint-module
+    format="1"
+    dir="C:\Users\aurel\Documents\GitHub\cocoa-CMR\SCP app\EU_Cocoa_Map_App\app"
+    name=":app"
+    type="APP"
+    maven="EU_Cocoa_Map_App:app:unspecified"
+    agpVersion="8.13.0"
+    buildFolder="build"
+    bootClassPath="C:\Users\aurel\AppData\Local\Android\Sdk\platforms\android-34\android.jar;C:\Users\aurel\AppData\Local\Android\Sdk\build-tools\35.0.0\core-lambda-stubs.jar"
+    javaSourceLevel="17"
+    compileTarget="android-34"
+    neverShrinking="true">
+  <lintOptions
+      abortOnError="true"
+      absolutePaths="true"
+      checkReleaseBuilds="true"
+      explainIssues="true"/>
+  <variant name="release"/>
+</lint-module>

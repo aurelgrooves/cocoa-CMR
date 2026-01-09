@@ -1,8 +1,5 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <style name="Theme.EUCocoaMap" parent="Theme.Material3.DayNight.NoActionBar" />
     <style name="Theme.EUCocoaMap.Splash" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">#6B3A1E</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_bg</item>
-        <item name="postSplashScreenTheme">@style/Theme.EUCocoaMap</item>
     </style>
 </resources>
