@@ -1,0 +1,458 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var hist_region = 
+    /* color: #d63000 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[9.134232132727806, 5.475484511144751],
+          [9.386917679602806, 3.904274817035279],
+          [10.820633499915306, 3.8165836231818204],
+          [12.556473343665306, 4.569866331641297],
+          [12.248856156165306, 5.508292205340341]]], null, false),
+    planetParam = {"opacity":1,"bands":["red","green","blue"],"min":282,"max":1632,"gamma":1},
+    TCC_param = {"opacity":1,"bands":["b1"],"min":0,"max":100,"palette":["8fff95","08662c"]},
+    surfaceWater = ee.Image("JRC/GSW1_4/GlobalSurfaceWater"),
+    GFC = ee.Image("UMD/hansen/global_forest_change_2023_v1_11"),
+    GFCForestTypes = ee.ImageCollection("JRC/GFC2020_subtypes/V0"),
+    JRC_2020 = ee.ImageCollection("JRC/GFC2020/V2"),
+    Planet = ee.Image("projects/ee-cocoacmr/assets/imagery/planet_mosaic_2020"),
+    S2_2020 = ee.Image("projects/ee-cocoacmr/assets/imagery/CMR_S2_2020"),
+    tcc20 = ee.Image("projects/ee-cocoacmr/assets/tccdata/2020"),
+    degraded = ee.Image("projects/ee-cocoacmr/assets/outputs/CMR_2020disturbanceMask");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var palettes = require('users/gena/packages:palettes');
+
+var aoi = ee.FeatureCollection('projects/ee-cocoacmr/assets/admin/cmr_admbnda_adm0_1kbuffer')
+Map.addLayer(aoi,{}, 'AOI',false)
+Map.centerObject(aoi,10)
+Map.addLayer(Planet,planetParam,'Planet 2020',false)
+Map.addLayer(S2_2020,{}, 'S2 2020',false)
+var TNT_2020 = ee.Image('projects/ee-cocoacmr/assets/land_cover/CMR_TNTMMU_2020').unmask()
+Map.addLayer(TNT_2020, {min:0, max:1, palette:['grey','green']}, 'TNT 2020', false)
+var version = 'v11'
+// Define visualization parameters for the land cover map
+var landcoverVis = {
+  min: 11,
+  max: 60,
+  palette: [
+  //'#000000',
+  '#157A46', //foret dense (11)
+  '#83C16F', //foret claire (12)
+  '#9E8826', // foret savane (13)
+  '#9e40b8', //mangrove (14)
+  '#998056', //degraded (15)
+  '#000000', // 16
+  '#000000', // 17
+  '#000000', // 18
+  '#000000', // 19
+  '#000000', // 20
+  '#A52A2A', // 21 plantations
+  '#AEDF18', // cropland (22)
+  '#000000', // 23
+  '#000000', // 24
+  '#000000', // 25
+  '#000000', // 26
+  '#000000', // 27
+  '#000000', // 28
+  '#000000', // 29
+  '#C1D3AE', //grassland (30)
+  '#000000', // 31
+  '#000000', // 32
+  '#000000', // 33
+  '#000000', // 34
+  '#000000', // 35 
+  '#000000', // 36
+  '#000000', // 37
+  '#000000', // 38
+  '#000000', // 39
+  '#000000', // 40
+  '#544C90', //marecages (41)
+  '#1B2FEA', //eau (42)
+  '#000000', // 43
+  '#000000', // 44
+  '#000000', // 45
+  '#000000', // 46
+  '#000000', // 47
+  '#000000', // 48
+  '#000000', // 49
+  '#784a50', // builtup (50)
+  '#000000', // 51
+  '#000000', // 52
+  '#000000', // 53
+  '#000000', // 54
+  '#000000', // 55
+  '#000000', // 56
+  '#000000', // 57
+  '#000000', // 58
+  '#000000', // 59
+  '#d9d2d0' // bare (60)
+  ]}
+
+//Map.addLayer(ee.Image('projects/ee-cocoacmr/assets/outputs/CMR_forest_types_v3'),landcoverVis,'Forest Types previous version',false)
+Map.addLayer(JRC_2020.mosaic().clip(aoi),{min:0, max:1, palette: ['grey','darkgreen']}, 'JRC 2020', false)
+var commonProj = TNT_2020.projection()
+var palmoil = ee.ImageCollection('projects/forestdatapartnership/assets/palm/palm_2020_model_20240312').mosaic().unmask(0).clip(aoi).gte(0.95).setDefaultProjection(commonProj)
+Map.addLayer(palmoil,{palette:['black','red']}, 'Palm oil',false)
+
+Map.addLayer(tcc20,TCC_param,'TCC 2020', false)
+var degraded = degraded.eq(1).and(TNT_2020.eq(1)).unmask()
+Map.addLayer(degraded,{palette:['white','red']}, 'degraded',false)
+var savane = tcc20.lte(30).and(tcc20.gt(10)).and(TNT_2020.eq(1)).unmask()
+Map.addLayer(savane,{palette:['black','tan']}, 'savane',false)
+var claire = tcc20.lte(60).and(tcc20.gt(30)).and(TNT_2020.eq(1)).unmask()
+Map.addLayer(claire,{palette:['black','brown']}, 'forêt claire',false)
+var dense = tcc20.gt(60).unmask().and(TNT_2020.eq(1))
+Map.addLayer(dense,{palette: ['black','darkgreen']},'forêt dense',false)
+
+// Plantations
+var filter_TC = 'Tree crops'
+var filter_Pl = 'Planted forest'
+
+//**SDPT v1 that we used to build the JRC Global cover map
+var cmr_pl_v1 = (ee.Image.constant(1)).clip(ee.FeatureCollection('users/bourgoinclement2/SDPT/cmr').filter(ee.Filter.inList('plant_ag', [filter_Pl]))).unmask()//.filter(ee.Filter.inList('plant_ag', ['Planted forest']))).unmask();
+var cmr_tc_v1 = (ee.Image.constant(1)).clip(ee.FeatureCollection('users/bourgoinclement2/SDPT/cmr').filter(ee.Filter.inList('plant_ag', [filter_TC]))).unmask()//.filter(ee.Filter.inList('plant_ag', ['Planted forest']))).unmask();
+
+var plantations = cmr_pl_v1.or(cmr_tc_v1)
+Map.addLayer(plantations,{}, 'Plantations', false)
+//Map.addLayer(SDPT_Pl_v1.updateMask(SDPT_Pl_v1),{},'SDPT_Pl_v1',false)
+//Map.addLayer(SDPT_TC_v1.updateMask(SDPT_TC_v1),{},'SDPT_TC_v1',false)
+
+var ESA_worldcover = ee.ImageCollection("ESA/WorldCover/v100").first()
+Map.addLayer(ESA_worldcover,{}, 'worldcover',false)
+var mangrove = ESA_worldcover.eq(95).unmask().and(TNT_2020.eq(1)).clip(aoi)
+Map.addLayer(mangrove,{palette: ['black','purple']},'mangroves',false)
+
+// ESA Worldcover 
+// 20 = shrubland
+// 30 = grassland
+// 40 = cropland
+// 50 = builtup
+// 60 = bare
+// 80 = water
+// 90 = herbaceous wetlands
+// 95 = mangrove
+
+var waterMask = surfaceWater.select('occurrence').unmask().gte(50).or(ESA_worldcover.eq(80)).selfMask().unmask().clip(aoi)
+Map.addLayer(waterMask.selfMask(),{min:0, max:1, palette: ['black','blue']}, 'Surface Water 50', false)
+
+//builtup
+var ESA_builtup = ESA_worldcover.eq(50).unmask().clip(aoi).setDefaultProjection(commonProj)
+Map.addLayer(ESA_builtup,{},'ESA Builtup', false)
+var builtup = ee.ImageCollection('JRC/GHSL/P2023A/GHS_BUILT_S_10m').first().select('built_surface').toInt()
+var builtup = builtup.gt(0).unmask().clip(aoi)
+Map.addLayer(builtup,{}, 'built up GHS', false)
+var settled = ee.ImageCollection('projects/sat-io/open-datasets/WSF/WSF_2019').mosaic().unmask().clip(aoi)
+Map.addLayer(settled,{}, 'settled',false)
+var humSurface = settled.eq(255).or(ESA_builtup.eq(1))
+Map.addLayer(humSurface, {min:0, max:1,palette:['black','purple']}, 'human surfaces', false)
+
+//grassland
+var cultiv_grassland = ee.ImageCollection("projects/global-pasture-watch/assets/ggc-30m/v1/cultiv-grassland_p")
+var min_prob = 30 // Probability threshold
+var GvisParams = {min: 15, max: 85, palette: 'f5f5f5,fdaf27,ae7947,3a2200'}
+var cultiv_grassland_2020 = cultiv_grassland.filterDate('2020-01-01', '2021-01-01').first().clip(aoi);
+Map.addLayer(cultiv_grassland_2020.mask(cultiv_grassland_2020.gte(min_prob)), GvisParams, 'Cultivated grassland prob. (2022)',false);
+var ESA_grass = ESA_worldcover.eq(30).clip(aoi)
+Map.addLayer(ESA_grass,{}, 'ESA Grassland', false)
+var grassland = (ESA_worldcover.eq(30).and(TNT_2020.neq(1)).and(tcc20.lt(10))).or(cultiv_grassland_2020.gte(min_prob)).clip(aoi)
+Map.addLayer(grassland,{min:0, max:1, palette:['black','yellow']}, 'grasslands', false)
+
+var marecages = ESA_worldcover.eq(90).and(TNT_2020.neq(1)).clip(aoi)
+Map.addLayer(marecages,{min:0,max:1, palette: ['black','purple']},'marecages',false)
+
+var bare = (ESA_worldcover.eq(60).or(tcc20.lt(10))).and(TNT_2020.neq(1)).and(humSurface.neq(1)).and(waterMask.neq(1)).unmask().clip(aoi)
+Map.addLayer(bare,{min:0,max:1, palette: ['black','grey']},'bare',false)
+
+var DigAF_crops = ee.ImageCollection('projects/sat-io/open-datasets/DEAF/CROPLAND-EXTENT/prob').mosaic().gte(70).unmask().clip(aoi)
+Map.addLayer(DigAF_crops,{},'Digital Africa croplands', false)
+
+var USGScroplands = ee.Image('projects/cafi_fao_congo/regional/croplands2019').setDefaultProjection(commonProj)
+Map.addLayer(USGScroplands,{min:0, max:1}, 'USGS croplands',false)
+var cropland = ESA_worldcover.eq(40).or(USGScroplands.eq(1).or(DigAF_crops.eq(1))).and(TNT_2020.neq(1)).unmask().clip(aoi)
+Map.addLayer(cropland,{min:0,max:1, palette: ['black','brown']},'cropland',false)
+
+var initial = ee.Image.constant(0).setDefaultProjection(commonProj) 
+var CMR_LC = initial.where(TNT_2020.eq(1),12)//everything that isn't something
+.where(dense.eq(1),11)
+.where(TNT_2020.neq(1),30) 
+.where(bare.eq(1),60)
+.where(savane.eq(1),13)
+.where(claire.eq(1),12)
+.where(mangrove.eq(1),14)
+.where(degraded.eq(1),15)
+.where(grassland.eq(1),30)
+.where(marecages.eq(1),41)
+.where(cropland.eq(1),22)
+.where(palmoil.eq(1),22)
+.where(waterMask.eq(1),42)
+.where(plantations.eq(1),21)
+.where(humSurface.eq(1),50)
+.clip(aoi).rename('LC_2020').setDefaultProjection(commonProj).toInt8()
+
+
+var classParams = {
+  bands: 'LC_2020',
+  min: 11,
+  max: 60,
+  palette: [
+    '#016300', // 11 - Forêt dense
+    '#B4FF89', // 12 - Forêt claire
+    '#569D6E', // 13 - Forêt-savane
+    '#00734C', // 14 - Mangrove
+    '#79CFAD', // 15 - Dégradée
+    '#c0c0c0', // 16 - (placeholder, gray)
+    '#c0c0c0', // 17
+    '#c0c0c0', // 18
+    '#c0c0c0', // 19
+    '#c0c0c0', // 20
+    '#A52A2A', // 21 - Plantations
+    '#FFF48D', // 22 - Cultures
+    '#c0c0c0', // 23
+    '#c0c0c0', // 24
+    '#c0c0c0', // 25
+    '#c0c0c0', // 26
+    '#c0c0c0', // 27
+    '#c0c0c0', // 28
+    '#c0c0c0', // 29
+    '#D0E09D', // 30 - Prairies
+    '#c0c0c0', // 31
+    '#c0c0c0', // 32
+    '#c0c0c0', // 33
+    '#c0c0c0', // 34
+    '#c0c0c0', // 35
+    '#c0c0c0', // 36
+    '#c0c0c0', // 37
+    '#c0c0c0', // 38
+    '#c0c0c0', // 39
+    '#c0c0c0', // 40
+    '#BEFFE8', // 41 -Marécages
+    '#89CFF0', // 42 -eau
+    '#c0c0c0', // 43
+    '#c0c0c0', // 44
+    '#c0c0c0', // 45
+    '#c0c0c0', // 46
+    '#c0c0c0', // 47
+    '#c0c0c0', // 48
+    '#c0c0c0', // 49
+    '#773447', // 50 - Zones construites
+    '#c0c0c0', // 51
+    '#c0c0c0', // 52
+    '#c0c0c0', // 53
+    '#c0c0c0', // 54
+    '#c0c0c0', // 55
+    '#c0c0c0', // 56
+    '#c0c0c0', // 57
+    '#c0c0c0', // 58
+    '#c0c0c0', // 59
+    '#d9d2d0'  // 60 - Sols nus
+  ]
+};
+
+print(CMR_LC,'Forest Types')
+Map.addLayer(CMR_LC,classParams,'Land Cover')
+
+// recode to GIEC types
+// Define the recode function
+var IPCCclass = CMR_LC.remap({
+    from: [11,12,13,14,15,21,22,30,41,42,50,60],
+    to: [10,10,10,10,10,20,20,30,40,40,50,60]
+  }).rename('IPCC_2020').toInt8();
+  
+var IPCCParams = {
+  bands: 'IPCC_2020',
+  min: 10,
+  max: 60,
+  palette: [
+    '#016300', // 10 - Forêt
+    '#c0c0c0', // 11
+    '#c0c0c0', // 12
+    '#c0c0c0', // 13
+    '#c0c0c0', // 14
+    '#c0c0c0', // 15
+    '#c0c0c0', // 16
+    '#c0c0c0', // 17
+    '#c0c0c0', // 18
+    '#FFF48D', // 19 - Cropland
+    '#c0c0c0', // 20
+    '#c0c0c0', // 21
+    '#c0c0c0', // 22
+    '#c0c0c0', // 23
+    '#c0c0c0', // 24
+    '#c0c0c0', // 25
+    '#c0c0c0', // 26
+    '#c0c0c0', // 27
+    '#c0c0c0', // 28
+    '#D0E09D', // 29 - Grassland
+    '#c0c0c0', // 30
+    '#c0c0c0', // 31
+    '#c0c0c0', // 32
+    '#c0c0c0', // 33
+    '#c0c0c0', // 34
+    '#c0c0c0', // 35
+    '#c0c0c0', // 36
+    '#c0c0c0', // 37
+    '#c0c0c0', // 38
+    '#89CFF0', // 39 - Water
+    '#c0c0c0', // 40
+    '#c0c0c0', // 41
+    '#c0c0c0', // 42
+    '#c0c0c0', // 43
+    '#c0c0c0', // 44
+    '#c0c0c0', // 45
+    '#c0c0c0', // 46
+    '#c0c0c0', // 47
+    '#c0c0c0', // 48
+    '#773447', // 49 - Built-up
+    '#c0c0c0', // 50
+    '#c0c0c0', // 51
+    '#c0c0c0', // 52
+    '#c0c0c0', // 53
+    '#c0c0c0', // 54
+    '#c0c0c0', // 55
+    '#c0c0c0', // 56
+    '#c0c0c0', // 57
+    '#c0c0c0', // 58
+    '#d9d2d0'  // 59 - Bare
+  ]
+};
+
+
+Map.addLayer(IPCCclass,IPCCParams, 'IPCC class', false)
+
+
+// Define the chart and print it to the console.
+var chart =
+    ui.Chart.image.histogram({image:CMR_LC, region: hist_region, 
+    //scale: CMR_forestTypes.projection().nominalScale(),
+    scale: 10,
+    maxPixels: 1e13})
+        .setSeriesNames(['LC_2020'])
+        .setOptions({
+          title: 'Classes',
+          hAxis: {
+            title: 'classes',
+            titleTextStyle: {italic: false, bold: true},
+          },
+          vAxis:
+              {title: 'Count', titleTextStyle: {italic: false, bold: true}},
+          colors: ['cf513e']
+        });
+print(chart);
+
+//var zero = CMR_forestTypes.eq(0)
+//Map.addLayer(zero)
+
+
+//calculate map areas
+//Add the area for each pixel
+var pixelArea = ee.Image.pixelArea().divide(10000).clip(aoi)
+// Multiply pixel area by the class to get the area per class
+var area_image = pixelArea.addBands(CMR_LC)
+//Reduce the region by summing up the areas per class
+var class_areas = area_image.reduceRegion({
+  reducer: ee.Reducer.sum().group({
+    groupField: 1,
+    groupName: 'LC_2020'
+  }),
+  geometry: aoi,
+  scale: 70,
+  maxPixels: 1e12
+});
+
+
+// Calculate area per pixel in hectares and clip to your AOI
+var pixelArea = ee.Image.pixelArea().divide(10000).clip(aoi); // hectares
+
+// Combine area with classification image
+var area_image = pixelArea.addBands(CMR_LC);
+
+// Reduce the region: sum area per class
+var class_areas = area_image.reduceRegion({
+  reducer: ee.Reducer.sum().group({
+    groupField: 1,
+    groupName: 'classification'
+  }),
+  geometry: aoi,
+  scale: 70,
+  maxPixels: 1e12
+});
+
+// Format and print readable output
+class_areas.evaluate(function(result) {
+  if (result && result.groups) {
+    print('🌍 Class Areas (hectares):');
+    result.groups.forEach(function(group) {
+      var classId = group.classification;
+      var area = group.sum;
+      print('Class: ' + classId + ' | Area: ' + area.toFixed(2) + ' ha');
+    });
+  } else {
+    print('⚠️ No area data returned. Check image, geometry, or scale.');
+  }
+});
+print(class_areas, 'class areas')
+
+// Define legend labels and colors
+var legendItems = [
+  {label: 'Forêt dense (11)', color: '#157A46'},
+  {label: 'Forêt claire (12)', color: '#83C16F'},
+  {label: 'Forêt savane (13)', color: '#9E8826'},
+  {label: 'Mangrove (14)', color: '#9e40b8'},
+  {label: 'Forêt Dégradée (15)', color: '#998056'},
+  {label: 'Plantations (21)', color: '#A52A2A'},
+  {label: 'Cultures (22)', color: '#AEDF18'},
+  {label: 'Herbacées (30)', color: '#C1D3AE'},
+  {label: 'Marécages (41)', color: '#544C90'},
+  {label: 'Eau (42)', color: '#1B2FEA'},
+  {label: 'Zones urbaines (50)', color: '#784a50'},
+  {label: 'Sol nu (60)', color: '#d9d2d0'}
+];
+
+// Create the legend panel
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+
+
+// Add color boxes and labels
+legendItems.forEach(function(item) {
+  var entry = ui.Panel({
+    layout: ui.Panel.Layout.Flow('horizontal'),
+    style: {margin: '0 0 4px 0'}
+  });
+
+  entry.add(ui.Label({
+    style: {
+      backgroundColor: item.color,
+      padding: '8px',
+      margin: '0 8px 0 0'
+    }
+  }));
+
+  entry.add(ui.Label(item.label));
+  legend.add(entry);
+});
+
+Map.add(legend);
+
+
+Export.image.toAsset({
+  image:CMR_LC,//.select('LC_2020').visualize(classParams), 
+  description: 'CMR_LC',
+  assetId: 'outputs/CMR_land_cover_2020'+version, 
+  pyramidingPolicy: 'MODE', 
+  region: aoi, 
+  scale:10, 
+  maxPixels:1e13})
+
+Export.image.toAsset({
+  image:IPCCclass,//.visualize(IPCCParams), 
+  description: 'CMR_IPCC',
+  assetId: 'outputs/CMR_IPCC_2020'+version, 
+  pyramidingPolicy: 'MODE', 
+  region: aoi, 
+  scale:10, 
+  maxPixels:1e13})

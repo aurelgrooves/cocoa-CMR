@@ -1,0 +1,199 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var geometry = /* color: #d63000 */ee.Geometry.MultiPoint(),
+    stats_area = 
+    /* color: #d63000 */
+    /* shown: false */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[11.899406522510349, 6.250760044714701],
+          [11.899406522510349, 4.818298292911624],
+          [13.173820585010349, 4.818298292911624],
+          [13.173820585010349, 6.250760044714701]]], null, false),
+    aoi = ee.FeatureCollection("projects/ee-cocoacmr/assets/admin/cmr_admbnda_adm0_1kbuffer");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+// http://forest.jrc.ec.europa.eu/download/software/guidos/mspa/
+// Written with scripts from Adam Duncan, WCS.
+////////////////////////////////////////////////////////////////////////////////
+
+var AOI = aoi
+Map.centerObject(AOI,10)
+
+
+var fnf = ee.Image('projects/ee-cocoacmr/assets/land_cover/CMR_TNTMMU_2020')
+// Specify the minimum patch size to define an interior forest core.
+var min_core_size = 100; // unit is number of pixels
+
+// Set the width to differentiate between forest interior and edges.
+var edgewidth = 20; // unit is number of pixels
+
+// Set the time period for which you want to assess forest changes.
+var year = 20; // ie 2001 = 1
+
+// definition.
+var background_opening_divide = 100;
+
+// During the processing, the CRS is set to EPSG 4326. 
+// Custom scale is the scale the analysis runs on and returns the end product. 
+// The smallest possible is the scale of the original forest dataset, 30 m. 
+var customscale = 10; // unit is metres
+
+////////////////////////////////////////////////////////////////////////////////
+// Begin processing steps.
+////////////////////////////////////////////////////////////////////////////////
+
+// Load and clip the forest data layers.
+var forest = fnf.clip(AOI)//.reproject('EPSG:4326', null, 30);
+var forest = forest.eq(1).selfMask()
+var forest_label = 'forest_20' + year;
+Map.addLayer(forest,{min:0,max:1,palette:['green']}, forest_label, false);
+// Smooth with a mode filter.
+//var fnf_mode = forest.focal_mode();
+// Use erosion and dilation to get rid of small islands.
+//var fnf_smooth = fnf_mode.focal_max(3).focal_min(5).focal_max(3);
+// Reproject to force the operations to be performed at SCALE.
+//Map.addLayer(fnf_smooth,{min:0,max:1,palette:['green']}, 'filtered forest')
+
+// 2. Check if the patch is large enough to support an interior forest core.
+var no_islet = forest.connectedPixelCount()
+                      .reproject({crs:'EPSG:4326', scale:customscale})
+                      .gte(min_core_size).unmask(0);
+
+// 3. Check if the patch is too small to contain an interior forest core.
+// Label these with a 5 to indicate islet status.
+var islet = forest.connectedPixelCount()
+  .reproject({crs:'EPSG:4326', scale:customscale}).lt(min_core_size);
+var islet = islet.updateMask(islet).multiply(5);
+
+var patch_label = 'Small_forest_patches_(islet)_20' + year;
+Map.addLayer(islet, {min:0, max:1,palette:['red']}, patch_label, false);
+
+// 4. 
+var outeredge_buff = no_islet.reduceNeighborhood(ee.Reducer.min(), 
+                                                        ee.Kernel.circle(edgewidth))
+  .reproject({crs:'EPSG:4326', scale:customscale,}).eq(0);
+var edge_preperf = outeredge_buff.updateMask(outeredge_buff).updateMask(no_islet);
+
+var perf_buff = no_islet.reduceNeighborhood(ee.Reducer.min(), ee.Kernel.circle(edgewidth))
+  .reproject({crs:'EPSG:4326', scale:customscale,}).eq(0);
+
+var inverse = no_islet.eq(0);
+
+var openings_premask = inverse.updateMask(inverse)
+  .connectedPixelCount(background_opening_divide)
+  .reproject({crs:'EPSG:4326', scale:customscale}).lt(background_opening_divide).eq(1);
+
+var openings = openings_premask.updateMask(openings_premask);
+
+var notopenings = inverse
+  .updateMask(openings.unmask(0).eq(0));
+
+var notopenings_buff = notopenings
+  .reduceNeighborhood(ee.Reducer.max(), ee.Kernel.circle(edgewidth))
+  .reproject({crs:'EPSG:4326', scale:customscale,});
+
+var edge = edge_preperf.updateMask(notopenings_buff);
+
+var perf = edge_preperf.updateMask(notopenings_buff.eq(0));
+
+var frag_year1 = no_islet // 0 & 1
+          .add(islet.unmask(0))//.multiplied by (5)
+          .add(edge.unmask(0))  // 2
+          .add(perf.unmask(0).multiply(2)) // 3
+          .add(openings.unmask(0).multiply(4))//4
+
+
+Map.addLayer(frag_year1,{}, 'output',false)
+//print(frag_year1)
+var frag_year1_rec = frag_year1
+  .remap([0,1,2,3,4,5],
+         [0,4,2,3,0,1])
+  .rename('fragmentation');
+         
+// var total_palette = ['grey','red','orange','yellow','green'];
+var frag_palette = [
+  'darkgrey', // 0: non forest 
+  '#91231e', // 1: patch forest (islet)
+  'yellow',// 2: outer edge
+  '#a7efa5',// 3: inner edge
+  '#10472d', // 4: core
+  'grey' //nonforest
+//  'blue',//regeneration
+//  '#e08e7f',//secondary degradation
+//  '#e57137',//secondary deforestation
+//  '#d67617',//primary degradation
+//  '#d62017' //primary deforestsation
+];
+
+var frag_labelyr1 = 'Fragmentation_20' + year;
+Map.addLayer(frag_year1_rec,{min:0,max:5,palette:frag_palette}, frag_labelyr1);
+//Map.addLayer(frag2015,{min:0,max:4,palette:frag_palette},'old frag layer',false)
+
+// Create an empty image into which to paint the features, cast to byte.
+var empty = ee.Image().byte();
+
+
+var add_legend = function(title, lbl, pal) {
+  var legend = ui.Panel({style: {position: 'bottom-left'}}), entry;
+  legend.add(ui.Label({value: title, style: { fontWeight: 'bold', fontSize: '12px', margin: '0 0 4px 0', padding: '0px' } }));
+  for (var x = 0; x < lbl.length; x++){
+    entry = [ ui.Label({style:{color: pal[x], margin: '0 0 4px 0'}, value: '██'}),
+      ui.Label({ value: labels[x], style: { margin: '0 0 4px 4px' } }) ];
+    legend.add(ui.Panel(entry, ui.Panel.Layout.Flow('horizontal')));
+  } Map.add(legend); };
+
+var labels = ['non forest','small forest patch','outer edge', 'inner edge','core forest' 
+  // ,'regeneration','secondary degradation','secondary deforestation','primary degradation',
+  // 'primary deforestation'
+  ];
+add_legend('Fragmentation', labels, frag_palette);
+
+Export.image.toAsset({
+  image: frag_year1_rec.toInt8().updateMask(fnf).clip(AOI),
+  region:AOI,
+  assetId: 'outputs/CMR_TNTMMU_frag_2020',
+  description: 'Fragmentation_20'+year,
+  pyramidingPolicy: 'MODE',
+  scale: 10,
+  maxPixels: 1e13,
+});
+
+
+//////
+// Calculate the pixel count for each class
+var classCounts = frag_year1_rec.reduceRegion({
+  reducer: ee.Reducer.frequencyHistogram(),
+  geometry: stats_area,
+  scale: 100,  // Adjust the scale as needed
+  maxPixels: 1e12 // Adjust as needed
+});
+
+// Get the pixel count dictionary
+var classCountsDict = ee.Dictionary(classCounts.get('fragmentation')); // Replace 'classified_band_name' with the name of your classified band
+
+// Convert the dictionary to a feature collection
+var featureCollection = ee.FeatureCollection(classCountsDict.map(function(classValue, count) {
+  return ee.Feature(null, {
+    class: ee.Number.parse(classValue),
+    count: ee.Number(count)
+  });
+}));
+
+// Sort the feature collection by class value
+var sortedFeatureCollection = featureCollection.sort('class');
+
+// Chart the number of pixels in each class
+var chart = ui.Chart.feature.byFeature(sortedFeatureCollection, 'class', 'count')
+  .setChartType('ColumnChart')
+  .setOptions({
+    title: 'Pixel Count by Frag Class',
+    legend: { position: 'none' },
+    hAxis: { title: 'Class' },
+    vAxis: { title: 'Pixel Count' }
+  });
+
+// Print the chart
+//print(chart);

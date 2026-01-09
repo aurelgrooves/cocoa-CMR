@@ -1,0 +1,51 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var aoi = ee.FeatureCollection("projects/ee-cocoacmr/assets/admin/CMR_national_aoi_GAUL");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+// create 2000 forest cover map from 2020 forest and change
+Map.centerObject(aoi, 8)
+var TNT2020 = ee.Image('projects/ee-cocoacmr/assets/land_cover/CMR_TNTMMU_2020')
+var change = ee.Image('projects/ee-cocoacmr/assets/outputs/CMR_all_changes_years_2000_2025').selfMask()
+
+Map.addLayer(TNT2020, {min:0, max:1, palette:['grey','darkgreen']}, 'TNT 2020', false)
+Map.addLayer(change, {}, 'change', false)
+var changePre2020 = change.lte(20)
+Map.addLayer(changePre2020,{min:0, max:1, palette:['black','red']}, 'change pre2020')
+var TNT2000 = ee.Image(TNT2020).where(
+  TNT2020.eq(0).and(changePre2020.eq(1)),
+  1);
+  
+Map.addLayer(TNT2000,{min:0, max:1, palette:['grey','green']}, 'TNT 2000', false)
+
+// Define the resolution and MMU
+var resolution = 10; // in meters
+var mmuArea = 0.5; // in hectares
+var mmuPixels = (mmuArea * 10000) / (resolution * resolution); // Convert hectares to number of pixels
+
+// Function to apply MMU to each class
+var applyMMU = function(image, classValue) {
+  // Create a binary mask for the class
+  var classMask = image.eq(classValue);
+  
+  // Calculate the connected pixel count
+  var connectedPixels = classMask.connectedPixelCount(mmuPixels, true);
+  
+  // Apply the MMU filter
+  var filteredMask = classMask.updateMask(connectedPixels.gte(mmuPixels));
+  
+  // Return the filtered class
+  return image.where(filteredMask, classValue).updateMask(filteredMask);
+};
+ 
+// Apply MMU to each class
+var TNT2000MMU = applyMMU(TNT2000, 1);
+
+Map.addLayer(TNT2000MMU,{min:0,max:1,palette:['grey','orange']}, 'TNT 2000 MMU')
+
+Export.image.toAsset({
+  image:TNT2000MMU.rename('FNF2000'), 
+  description:'TNT2000_MMU', 
+  assetId:'projects/ee-cocoacmr/assets/land_cover/CMR_TNTMMU_2000', 
+  pyramidingPolicy: 'MODE', 
+  region:aoi, 
+  scale:10, 
+  maxPixels:1e13})

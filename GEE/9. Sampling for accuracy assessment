@@ -1,0 +1,195 @@
+// Load the land cover map
+var landcover = ee.Image('projects/ee-cocoacmr/assets/land_cover/CMR_land_cover_2020');
+
+// Define the total number of samples
+var totalSamples = 4000;
+var seed = 146787
+
+// Define visualization parameters for the land cover map
+var landcoverVis = {
+  min: 11,
+  max: 60,
+  palette: [
+  //'#000000',
+  '#157A46', //foret dense (11)
+  '#83C16F', //foret claire (12)
+  '#9E8826', // foret savane (13)
+  '#9e40b8', //mangrove (14)
+  '#998056', //degraded (15)
+  '#000000', // 16
+  '#000000', // 17
+  '#000000', // 18
+  '#000000', // 19
+  '#000000', // 20
+  '#000000', // 21
+  '#AEDF18', // cropland (22)
+  '#000000', // 23
+  '#000000', // 24
+  '#000000', // 25
+  '#000000', // 26
+  '#000000', // 27
+  '#000000', // 28
+  '#000000', // 29
+  '#C1D3AE', //grassland (30)
+  '#000000', // 31
+  '#000000', // 32
+  '#000000', // 33
+  '#000000', // 34
+  '#000000', // 35 
+  '#000000', // 36
+  '#000000', // 37
+  '#000000', // 38
+  '#000000', // 39
+  '#000000', // 40
+  '#544C90', //marecages (41)
+  '#1B2FEA', //eau (42)
+  '#000000', // 43
+  '#000000', // 44
+  '#000000', // 45
+  '#000000', // 46
+  '#000000', // 47
+  '#000000', // 48
+  '#000000', // 49
+  '#784a50', // builtup (50)
+  '#000000', // 51
+  '#000000', // 52
+  '#000000', // 53
+  '#000000', // 54
+  '#000000', // 55
+  '#000000', // 56
+  '#000000', // 57
+  '#000000', // 58
+  '#000000', // 59
+  '#d9d2d0' // bare (60)
+  ]}
+
+// Add the land cover map to the map as a layer
+Map.addLayer(landcover, landcoverVis, 'Land Cover 2020');
+
+// Define the region of interest (study area)
+var roi = ee.FeatureCollection('projects/cafi_fao_congo/aoi/congo_basin_lsib').filter(ee.Filter.eq('ISO','CMR')).geometry()
+Map.centerObject(roi,8)
+
+// Get the unique classes in the land cover map
+var classes = landcover.reduceRegion({
+  reducer: ee.Reducer.frequencyHistogram(),
+  geometry: roi,
+  scale: 100,
+  maxPixels: 1e13
+}).get('LC_2020');
+
+// Print the unique classes
+print('Land Cover Classes:', classes);
+
+// Convert the class frequencies to a dictionary
+classes = ee.Dictionary(classes);
+
+// Calculate the total area of the region of interest
+var totalArea = roi.area().divide(10000);  // Area in hectares
+print('Total Area (ha):', totalArea);
+
+// Calculate the area for each class
+var areas = classes.map(function(key, value) {
+  var classArea = landcover.updateMask(landcover.eq(ee.Number.parse(key)))
+    .multiply(ee.Image.pixelArea())
+    .reduceRegion({
+      reducer: ee.Reducer.sum(),
+      geometry: roi,
+      scale: 100,
+      maxPixels: 1e9
+    }).get('LC_2020');
+  return ee.Number(classArea).divide(10000);  // Convert to hectares
+});
+print('Class Areas (ha):', areas);
+
+
+
+// Calculate the number of samples for each class proportional to its area
+var totalAreaSum = areas.values().reduce(ee.Reducer.sum());
+var samplesPerClass = areas.map(function(key, value) {
+  return ee.Number(value).divide(totalAreaSum).multiply(totalSamples).round();
+});
+
+// Normalize the sample counts to ensure the total is within the limit
+var totalAllocatedSamples = samplesPerClass.values().reduce(ee.Reducer.sum());
+samplesPerClass = samplesPerClass.map(function(key, value) {
+  return ee.Number(value).divide(totalAllocatedSamples).multiply(totalSamples).round();
+});
+print('Samples per Class:', samplesPerClass);
+
+// Convert class keys to integers
+var classValues = classes.keys().map(function(key) {
+  return ee.Number.parse(key).toInt();
+});
+
+
+// Create a stratified sample of the land cover map
+var stratifiedSample = landcover.stratifiedSample({
+  numPoints: totalSamples,
+  classBand: 'LC_2020',
+  region: roi,
+  scale: 70,
+  classValues: classValues,
+  classPoints: samplesPerClass.values(),
+  geometries: true,
+  seed: seed
+});
+
+// Add the stratified sample points to the map
+Map.addLayer(stratifiedSample, {color: 'blue'}, 'Stratified Sample');
+
+// Print the stratified sample
+print('Stratified Sample:', stratifiedSample.size());
+
+// Map over the feature collection and add latitude and longitude attributes
+var pointsWithLatLon = stratifiedSample.map(function(feature) {
+  // Get the coordinates of the feature's geometry
+  var coords = feature.geometry().coordinates();
+  
+  // Get latitude and longitude from the coordinates
+  var latitude = ee.Number(coords.get(1));
+  var longitude = ee.Number(coords.get(0));
+  
+  // Add latitude and longitude as properties to the feature
+  return feature.set('lat', latitude).set('lon', longitude);
+});
+
+// Print the first feature in the feature collection to verify the latitude and longitude attributes
+print('First Feature with Latitude and Longitude:', pointsWithLatLon.limit(5));
+
+// Get the size of the feature collection
+var size = pointsWithLatLon.size();
+
+print(size, 'points w latlon')
+
+// Convert the feature collection to a list
+var toList = pointsWithLatLon.toList(size);
+
+// Create a list of indices and shuffle them to generate random PLOTIDs
+var idList = ee.List.sequence(0, size.subtract(1));
+var shuffledIDs = idList.shuffle();
+
+// Define the function to add the new property 'PLOTID'
+var addPlotID = function(x) {
+  var index = ee.Number(x);
+  var feat = ee.Feature(toList.get(index));
+  var plotID = ee.Number(shuffledIDs.get(index)).add(1);
+  
+  return feat.set('PLOTID', plotID).copyProperties(feat);
+};
+
+// Map over the original list to add the PLOTID property to each feature
+var pointsWithPlotID = idList.map(addPlotID);
+
+// Convert the result back to a FeatureCollection
+pointsWithPlotID = ee.FeatureCollection(pointsWithPlotID);
+
+// Print the new feature collection
+print(pointsWithPlotID, 'Points with Randomized PLOTID');
+
+// Export the stratified sample to a CSV file (optional)
+Export.table.toDrive({
+  collection: pointsWithPlotID,
+  description: 'Stratified_Sample_for_CEO',
+  fileFormat: 'CSV'
+});

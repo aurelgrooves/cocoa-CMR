@@ -1,0 +1,119 @@
+//script to assess accuracy of cocoa maps
+
+//parameters
+var ISO = 'CMR'
+var aoi = ee.FeatureCollection('projects/ee-cocoacmr/assets/admin/cmr_admbnda_adm0_1kbuffer')//.filter(ee.Filter.eq('ISO', ISO))
+Map.centerObject(aoi,8) 
+
+// global map 1 = forest, 0 = non-forest
+//ESA CCI land cover classses remapping to IPCC 
+ 
+// documentation: https://www.google.com/url?q=https%3A%2F%2Fmaps.elie.ucl.ac.be%2FCCI%2Fviewer%2Fdownload%2FESACCI-LC-Ph2-PUGv2_2.0.pdf&sa=D&sntz=1&usg=AOvVaw3l4EuhQacfPzxC3Xay3mqn
+// see Table 3-3: Correspondence between the IPCC land categories used for the change detection and the LCCS legend used in the CCI-LC classes. 
+
+// also implemented in earth map: https://help.earthmap.org/datasets/land-useland-cover/ipcc-land-use-classification-cciesa
+
+// Load ESA CCI LC annual image for a given year (e.g., 2020)
+var cci = ee.Image('users/amitghosh/sdg_module/esa/cci_landcover/2022'); //<- change year as needed
+// print(cci)
+
+// Get the land cover classification band (usually 'lccs_class')
+var lc = cci.select('b1');
+
+// Define ESA CCI LC class codes for each IPCC category
+var ipcc_remap = {
+  // IPCC 1: Cropland
+  1: [10, 11, 12, 20, 30, 40],
+
+  // IPCC 2: Forest
+  2: [50, 60, 61, 62, 70, 71, 72, 80, 81, 82, 90, 100, 160, 170],
+
+  // IPCC 3: Grassland
+  3: [110, 130],
+
+  // IPCC 4: Wetland
+  4: [180],
+
+  // IPCC 5: Settlement
+  5: [190],
+
+  // IPCC 6: Other land (Shrubland, Sparse, Bare, Water)
+  6: [120, 121, 122, 140, 150, 151, 152, 153, 200, 201, 202, 210]
+};
+
+// Flatten keys and values into remap arrays
+var fromClasses = [];
+var toIPCC = [];
+
+Object.keys(ipcc_remap).forEach(function(ipcc) {
+  ipcc_remap[ipcc].forEach(function(classVal) {
+    fromClasses.push(classVal);
+    toIPCC.push(Number(ipcc));
+  });
+});
+
+// Remap ESA CCI LC classes to IPCC categories
+var ipcc_mapped = lc.remap(fromClasses, toIPCC).rename('ipcc_class');
+
+// Visualization (optional)
+Map.centerObject(cci, 3);
+Map.addLayer(ipcc_mapped, {min: 1, max: 6, palette: ['yellow', 'darkgreen', 'green', 'blue', 'red', 'gray']}, 'IPCC Classes',false);
+
+
+//national map
+var national_map = ee.Image('projects/ee-cocoacmr/assets/outputs/CMR_land_cover_2020').rename('classified')
+Map.addLayer(national_map,{min:0, max:1, palette: ['grey','green']}, 'National Map')
+
+//determine classes of the map to validate
+// 1 = forest, 0 = not forest
+
+var validation = ee.FeatureCollection('projects/ee-cocoacmr/assets/feature_data/CMR_2020_LC_types_ceo_ref_val')
+
+Map.addLayer(validation,{}, 'validation')
+//landuse n1 cropland, forestland, wetlands, grassland)
+//landuse n2 cocoa, palmgrove
+
+// Sample the classified map at validation points
+var validated = national_map.sampleRegions({
+  collection: validation,
+  properties: ['LC_2020_Code_Ref'], 
+  scale: 10,
+  geometries: true
+});
+
+// Generate confusion matrix
+var confMatrix = validated.errorMatrix('LC_2020_Code_Ref', 'classified');
+print('Confusion Matrix:', confMatrix);
+print('Overall Accuracy:', confMatrix.accuracy());
+print('Kappa:', confMatrix.kappa());
+
+// User's Accuracy
+var userAccuracy = confMatrix.consumersAccuracy();
+print('precision:', userAccuracy);
+
+// Producer's Accuracy
+var producerAccuracy = confMatrix.producersAccuracy();
+print('recall:', producerAccuracy);
+
+
+// Extract producer and user accuracy lists properly
+var userArray = ee.Array(confMatrix.consumersAccuracy());
+var producerArray = ee.Array(confMatrix.producersAccuracy());
+
+// Convert user accuracy row vector to flat list
+var userList = ee.List(ee.Array(userAccuracy).toList().get(0));
+
+// Convert producer accuracy column vector to flat list
+var producerList = ee.Array(producerAccuracy)
+  .toList()
+  .map(function(e) { return ee.List(e).get(0); });
+
+// Compute F1 scores
+var f1Scores = ee.List.sequence(0, userList.length().subtract(1)).map(function(i) {
+  i = ee.Number(i);
+  var ua = ee.Number(userList.get(i));
+  var pa = ee.Number(producerList.get(i));
+  return pa.multiply(ua).multiply(2).divide(pa.add(ua));
+});
+
+print('F1 Scores per class (0 = nonforest, 1 = forest):', f1Scores);

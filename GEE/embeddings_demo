@@ -1,0 +1,90 @@
+// This script deviation between Satellite Embedding vectors for two
+// different years
+
+// Load embeddings dataset.
+var dataset = ee.ImageCollection('GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL');
+
+var point = ee.Geometry.Point([12.395, 4.594]);
+
+// Get embedding images for two years.
+var image1 = dataset
+    .filterDate('2023-01-01', '2024-01-01')
+    .mosaic();
+
+var image2 = dataset
+    .filterDate('2024-01-01', '2025-01-01')
+    .mosaic();
+    
+
+// Rescale axis values from [-1, 1] to [0, 1] if non-negative inputs required.
+function rescale(image) {
+  return image.add(1).divide(2);
+  
+}
+
+// ------------------------- COMPOSITES -------------------------
+
+// Let's add some Sentinel-2 median composites for reference.
+var sentinel2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED');
+var csPlus = ee.ImageCollection('GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED');
+
+var QA_BAND = 'cs_cdf';
+var CLEAR_THRESHOLD = 0.60;
+
+var rgb1 = sentinel2
+    .filterDate('2023-01-01', '2024-01-01')
+    .select(['B4', 'B3', 'B2'])
+    .linkCollection(csPlus, [QA_BAND])
+    .map(function(img) {
+      return img.updateMask(img.select(QA_BAND).gte(CLEAR_THRESHOLD));
+    })
+    .median();
+Map.addLayer(rgb1, {min: 0, max: 3000}, 'rgb year 1');
+
+var rgb2 = sentinel2
+    .filterDate('2024-01-01', '2025-01-01')
+    .select(['B4', 'B3', 'B2'])
+    .linkCollection(csPlus, [QA_BAND])
+    .map(function(img) {
+      return img.updateMask(img.select(QA_BAND).gte(CLEAR_THRESHOLD));
+    })
+    .median();
+Map.addLayer(rgb2, {min: 0, max: 3000}, 'rgb year 2');
+
+
+// ------------------------- COMPARISONS -------------------------
+
+// Dot product. Note inverted min/max for visualization.
+// Equal to cosine similarity for unit-length vectors.
+var dot = image1
+    .multiply(image2)
+    .reduce(ee.Reducer.sum())
+    .rename('cos');
+Map.addLayer(dot, {min: 1, max: 0}, 'dot product',false);
+
+//  Convince yourself SAM = arccos(dot).
+var acosDot = dot.acos().rename('acos');
+Map.addLayer(acosDot, {}, 'arccos(dot)', false);
+
+// Spectral Angle Mapper (SAM).
+var sam = image1.spectralDistance(image2, 'sam');
+Map.addLayer(sam, {}, 'spectral angle mapper',false);
+
+// Spectral Information Divergence. Assumes non-negative inputs.
+var sid = rescale(image1).spectralDistance(rescale(image2), 'sid');
+Map.addLayer(sid, {min: 0, max: 0.2}, 'spectral information divergence',false);
+
+// Squared Euclidean Distance.
+var sed = image1.spectralDistance(image2, 'sed');
+Map.addLayer(sed, {}, 'squared euclidean distance',false);
+
+// Earth movers distance.
+var emd = image1.spectralDistance(image2, 'emd');
+ 
+// Considers axes pair-wise, normalize by number of axes to get final dissimilarity
+// measure on [0, 1].
+emd = emd.divide(image1.bandNames().length());
+Map.addLayer(emd, {min: 0, max: 1}, 'earth movers distance',false);
+
+Map.centerObject(point, 11);
+Map.setOptions('SATELLITE');

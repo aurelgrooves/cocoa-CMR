@@ -1,0 +1,733 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var planetViz = {"opacity":1,"bands":["red","green","blue"],"min":131,"max":1066,"gamma":1},
+    aoi = ee.FeatureCollection("projects/ee-cocoacmr/assets/admin/CMR_cocoa_aoi_GAUL"),
+    cocoa_classes = ee.Image("projects/ee-cocoacmr/assets/outputs/CMR_cocoaClasses_2020_v1_1");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+// Potential risk map classes based on potential impact of deforestation before 2020
+// 1 - no risk: non-forest
+// 2 - CICC polygons
+// 3 - agro-industrial plantations 
+// 4 - lowest risk: confirmed disturbance pre-2020 (>1 detections)
+// 5 - lower risk: disturbance pre-2020 (1 detection) and not core forest
+// 5 - med risk: disturbance pre-2020 (<1 detections) and core forest
+// 6 - high risk: forest, no disturbance pre 2020; disturbance post-2020 (1 detection)
+// 7 - higher risk: forest, no disturbance pre 2020; disturbance post-2020 (>1 detection)
+// 8 - higherer risk: forest, no disturbance, non-core forest
+// 9 - highest risk: forest, no disturbances post or pre 2020, core forest
+// 10 - land use risk: forest in domaine permanent (protected areas), or UFA
+
+Map.addLayer(ee.Image('projects/ee-cocoacmr/assets/imagery/planet_mosaic_2020'),planetViz, 'Planet image')
+
+// Land use 
+var ZAP = ee.FeatureCollection('projects/ee-cocoacmr/assets/feature_data/Zones_aire_protegees')
+var AP = ee.FeatureCollection('projects/ee-cocoacmr/assets/feature_data/Aires_protegees_de_faunes')
+var FC = ee.FeatureCollection('projects/ee-cocoacmr/assets/feature_data/Forets_communautaires')
+var RF = ee.FeatureCollection('projects/ee-cocoacmr/assets/feature_data/Reserves_forestieres')
+var UFE = ee.FeatureCollection('projects/ee-cocoacmr/assets/feature_data/Unites_forestieres_exploitation')
+var AGRO = ee.FeatureCollection('projects/ee-cocoacmr/assets/feature_data/Plantations_agro_industrielle').map(function(f) { return f.set('code', 1); })
+var cocoa_plots = ee.FeatureCollection('projects/ee-cocoacmr/assets/training_data/BC_Cocoa').merge(ee.FeatureCollection('projects/ee-cocoacmr/assets/training_data/Dja_Farms_TFRD'))
+.merge('projects/ee-cocoacmr/assets/training_data/CICC_all_polys')
+var cocoa = cocoa_plots.map(function(f) {
+  return f.set('cocoa', 1);
+});
+var cocoa_raster = cocoa.reduceToImage({
+  properties: ['cocoa'],
+  reducer: ee.Reducer.first()
+}).unmask().clip(aoi);
+
+Map.addLayer(cocoa_raster, {}, 'cocoa plots', false)
+var AGRO_raster = AGRO.reduceToImage({
+  properties: ['code'],
+  reducer: ee.Reducer.first()
+}).unmask().clip(aoi);
+
+var domaine_permanent = ZAP.merge(AP).merge(RF).merge(UFE).map(function(f) { return f.set('code', 1); });
+Map.centerObject(domaine_permanent,8)
+// Convert to raster using the 'lu_code' property
+var risk10 = domaine_permanent.reduceToImage({
+  properties: ['code'],
+  reducer: ee.Reducer.first()
+})
+
+var risk10 = risk10.multiply(10).unmask();
+
+// Land cover
+var TNT = ee.Image('projects/ee-cocoacmr/assets/land_cover/CMR_TNTMMU_2020').unmask().clip(aoi)
+Map.addLayer(TNT, {min:0,max:1,palette:['grey','green']}, 'TNT',false)
+var TNTW = ee.Image('projects/ee-cocoacmr/assets/land_cover/CMR_TNTW_2020').unmask().clip(aoi)
+Map.addLayer(TNTW,{min:1,max:3,palette:['grey','green','blue']}, 'TNTW',false)
+var water = TNTW.eq(3).unmask()
+var land_mask = TNT.gte(0).and(water.eq(0))
+Map.addLayer(land_mask,{}, 'land mask',false)
+Map.addLayer(water,{palette:'lightblue'}, 'water',false)
+var frag = ee.Image('projects/ee-cocoacmr/assets/land_cover/CMR_TNTMMU_frag_2020').unmask()
+var frag_params = {
+  min: 0,
+  max: 5,
+  palette: [  
+  '#DCDCDC', // 0: non forest 
+  '#91231e', // 1: patch forest (islet)
+  'yellow',// 2: outer edge
+  '#a7efa5',// 3: inner edge
+  '#10472d', // 4: core
+  'grey' //nonforest=
+  ]}
+Map.addLayer(frag,frag_params, 'fragmentation',false)
+
+// Disturbances
+
+var def20182024 = ee.Image('projects/ee-cocoacmr/assets/deforestation')
+Map.addLayer(def20182024.select('lossyear_mmu').selfMask(),{min:2018,max:2024, palette:['yellow','red']}, 'Def Year CCDC')
+var dist_pre2020 = ee.Image('projects/ee-cocoacmr/assets/outputs/CMR_2020disturbanceSum').unmask()
+Map.addLayer(dist_pre2020.selfMask(), {min:0, max:2, palette: ['grey', 'green','red']}, 'Disturbance pre 2020',false)
+
+//DIST alerts
+var folder = "projects/glad/HLSDIST/current";
+var DIST = ee.ImageCollection(folder+"/VEG-DIST-STATUS").mosaic().clip(aoi).gt(0).unmask()
+Map.addLayer(DIST.selfMask(),{palette:'red'},'VEG-DIST-STATUS',false);
+
+//GLAD-L
+var GLAD_L = ee.ImageCollection('projects/glad/alert/UpdResult')//.clip(aoi);
+//var alert24 = GLAD_L.select('conf24').mosaic().clip(aoi).gte(2);
+var GLAD_post2020 = GLAD_L.select('conf25').mosaic().clip(aoi).gte(2);
+Map.addLayer(GLAD_post2020.selfMask(),{palette:['00FFFF']},'GLAD-L',false);
+
+//RADD
+var radd = ee.ImageCollection('projects/radar-wur/raddalert/v1');
+var geography = 'africa';
+var radd_alert =  ee.Image(radd.filterMetadata('layer','contains','alert')
+                            .filterMetadata('geography','equals',geography)
+                            .sort('system:time_end', false).first());
+var radd_mask = radd_alert.select('Alert').eq(3)
+var radd_post2020 = radd_alert.select('Date').gte(21000).updateMask(radd_mask).clip(aoi).unmask()
+Map.addLayer(radd_post2020.selfMask(),{}, 'RADD post 2020',false)
+
+//All disturbances 
+var dist_post2020 = DIST.add(radd_post2020).add(GLAD_post2020);
+Map.addLayer(dist_post2020.selfMask(),{palette: ['black','orange','red']}, 'post 2020',false)
+
+//Risk 1
+var risk1= TNT.eq(0).or(cocoa_raster.eq(1)).unmask()
+.and(AGRO_raster.eq(0))
+.and(risk10.neq(10))
+.and(land_mask.eq(1)).unmask().clip(aoi)
+
+Map.addLayer(risk1,{palette:['black','#00441b']},'risk 1',false)
+
+//Risk 2 
+var risk2 = risk10.neq(10)
+.and(AGRO_raster.eq(1))
+.and((dist_pre2020.gt(0)).or(TNT.eq(0)))
+.and(land_mask.eq(1)).unmask().clip(aoi).multiply(2)
+
+Map.addLayer(risk2,{palette: ['black','green']}, 'risk 2',false)
+
+//Risk 3
+var risk3 = TNT.eq(1)
+.and(dist_pre2020.gt(1))
+.and(risk10.neq(10))
+.and(AGRO_raster.neq(1))
+.and(land_mask.eq(1)).unmask().clip(aoi).multiply(3)
+
+Map.addLayer(risk3,{palette:['black','#1b7837']},'risk 3',false)
+
+//Risk 4
+var risk4 = TNT.eq(1)
+.and(dist_pre2020.eq(1))
+.and(frag.lt(4))
+.and(risk10.neq(10))
+.and(AGRO_raster.neq(1))
+.and(land_mask.eq(1)).unmask().clip(aoi).multiply(4)
+
+Map.addLayer(risk4,{palette:['black','#5aa053']},'risk 4',false)
+
+//Risk 5
+var risk5 = TNT.eq(1)
+.and(dist_pre2020.eq(1))
+.and(frag.eq(4))
+.and(AGRO_raster.neq(1))
+.and(risk10.neq(10))
+.and(land_mask.eq(1)).unmask().clip(aoi).multiply(5)
+
+Map.addLayer(risk5,{palette:['black','#f3e012']},'risk 5',false)
+
+//Risk 6
+var risk6 = TNT.eq(1)
+.and(dist_pre2020.eq(0))
+.and(dist_post2020.eq(1))
+.and(AGRO_raster.neq(1))
+.and(risk10.neq(10))
+.and(land_mask.eq(1)).unmask().clip(aoi).multiply(6)
+
+
+Map.addLayer(risk6, {palette:['black','#a6d96a']}, 'risk 6',false)
+
+//Risk 7
+var risk7 = TNT.eq(1)
+.and(dist_pre2020.eq(0))
+.and(dist_post2020.gt(1))
+.and(AGRO_raster.neq(1))
+.and(risk10.neq(10))
+.and(land_mask.eq(1)).unmask().clip(aoi).multiply(7)
+
+Map.addLayer(risk7,{palette:['black','#ffffbf']}, 'risk 7',false)
+
+//Risk 8
+var risk8 = TNT.eq(1)
+.and(dist_pre2020.eq(0))
+.and(dist_post2020.eq(0))
+.and(AGRO_raster.neq(1))
+.and(risk10.neq(10))
+.and(frag.lt(4))
+.and(land_mask.eq(1)).unmask().clip(aoi).multiply(8)
+
+Map.addLayer(risk8, {palette:['black','#fee08b']},'risk 8',false)
+
+//Risk 9
+var risk9 = TNT.eq(1)
+.and(dist_pre2020.eq(0))
+.and(dist_post2020.eq(0))
+.and(AGRO_raster.neq(1))
+.and(risk10.neq(10))
+.and(frag.eq(4))
+.and(land_mask.eq(1)).unmask().clip(aoi).multiply(9)
+
+Map.addLayer(risk9, {palette:['black','#f46d43']},'risk 9',false)
+
+//Risk 10
+Map.addLayer(risk10.clip(aoi), {min:0, max:10, palette:['black','#563e3e']}, 'Risk 10 - domaine permanent',false)
+
+
+//All Risk
+var allRisk = risk1.unmask()
+.max(risk2).unmask()
+.max(risk3).unmask()
+.max(risk4).unmask()
+.max(risk5).unmask()
+.max(risk5).unmask()
+.max(risk6).unmask()
+.max(risk7).unmask()
+.max(risk8).unmask()
+.max(risk9).unmask()
+.max(risk10).unmask()
+.updateMask(land_mask)
+.rename('risk').toInt()
+
+var riskColors = [
+  "#6a70fd", // 1 Dark green
+  "#6699cd", // 2 Forest green
+  "#5eb7fe", // 3 Medium green
+  "#95fcc3", // 4 Yellow-green
+  "#d9ef8b", // 5 Light yellow
+  "#ccfd83", // 6 Pale yellow
+  "#f2fe2a", // 7 Orange
+  "#f5f57a", // 8 Red-orange
+  "#e1be56", // 9 Red
+  "#cd8966"  // 10 Dark red
+];
+
+
+Map.addLayer(allRisk,{min:1, max:10, palette:riskColors}, 'all risk')
+
+Map.addLayer(cocoa_classes,{min:1, max:2, palette:['yellow','brown']}, 'cocoa classes')
+
+
+var risk0 = allRisk.eq(0)
+//Map.addLayer(risk0,{min:0,max:1, palette:['black','green']}, 'Risk 0')
+// Chart areas
+
+// Define pixel area in hectares
+var pixelArea = ee.Image.pixelArea().divide(10000);
+
+// Create a histogram of class values
+var classHistogram = allRisk.reduceRegion({
+  reducer: ee.Reducer.frequencyHistogram(),
+  geometry: aoi,
+  scale: 500,
+  maxPixels: 1e13
+}).get('risk');
+
+// Print class counts
+//print('Class counts:', classHistogram);
+
+// Get a list of class keys and compute area per class
+classHistogram = ee.Dictionary(classHistogram);
+var classKeys = classHistogram.keys();
+var classAreas = classKeys.map(function(classValue) {
+  classValue = ee.Number.parse(classValue);
+  var classMask = allRisk.eq(classValue);
+  var area = classMask.multiply(pixelArea)
+              .reduceRegion({
+                reducer: ee.Reducer.sum(),
+                geometry: aoi,
+                scale: 10,
+                maxPixels: 1e13
+              }).get('risk');
+  return ee.Dictionary({
+    class: classValue,
+    area_ha: ee.Number(area)
+  });
+});
+
+// Convert to FeatureCollection
+var chartData = ee.FeatureCollection(ee.List(classAreas).map(function(dict) {
+  dict = ee.Dictionary(dict);
+  return ee.Feature(null, dict).set('class_str', ee.String(dict.get('class')));
+}));
+
+// Print the FeatureCollection
+//print('Class Areas (ha):', chartData);
+
+var pieChart = ui.Chart.feature.byFeature({
+  features: chartData,
+  xProperty: 'class_str',
+  yProperties: ['area_ha']
+}).setChartType('PieChart')
+  .setOptions({
+    title: 'Area Distribution per Class (ha)',
+    pieHole: 0.4,
+    slices: {
+      0: {color: '#00441b'}, 1: {color: '#1b7837'}, 2: {color: '#4dac26'},
+      3: {color: '#a6d96a'}, 4: {color: '#d9ef8b'}, 5: {color: '#fee08b'},
+      6: {color: '#fdae61'}, 7: {color: '#f46d43'}, 8: {color: '#d73027'},
+      9: {color: '#7f0000'}
+    },
+    legend: {position: 'right'}
+  });
+
+//print(pieChart);
+
+  Export.image.toDrive({
+    image: allRisk,
+    folder: 'GEE',
+    description: 'CMR_EUDR_risk_2020',
+    scale: 10,
+    maxPixels: 1e13
+  });
+
+/////basemap
+var snazzy = require("users/aazuspan/snazzy:styles");
+
+var grey = [
+    {
+        "featureType": "all",
+        "elementType": "labels",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "all",
+        "elementType": "labels.text",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "all",
+        "elementType": "labels.text.fill",
+        "stylers": [
+            {
+                "saturation": 36
+            },
+            {
+                "color": "#000000"
+            },
+            {
+                "lightness": 40
+            }
+        ]
+    },
+    {
+        "featureType": "all",
+        "elementType": "labels.text.stroke",
+        "stylers": [
+            {
+                "visibility": "on"
+            },
+            {
+                "color": "#000000"
+            },
+            {
+                "lightness": 16
+            }
+        ]
+    },
+    {
+        "featureType": "all",
+        "elementType": "labels.icon",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "administrative",
+        "elementType": "geometry.fill",
+        "stylers": [
+            {
+                "color": "#000000"
+            }
+        ]
+    },
+    {
+        "featureType": "administrative",
+        "elementType": "geometry.stroke",
+        "stylers": [
+            {
+                "color": "#000000"
+            },
+            {
+                "lightness": 17
+            },
+            {
+                "weight": 1.2
+            }
+        ]
+    },
+    {
+        "featureType": "administrative",
+        "elementType": "labels",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "administrative",
+        "elementType": "labels.text",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "administrative.country",
+        "elementType": "all",
+        "stylers": [
+            {
+                "visibility": "simplified"
+            }
+        ]
+    },
+    {
+        "featureType": "administrative.country",
+        "elementType": "geometry",
+        "stylers": [
+            {
+                "visibility": "simplified"
+            }
+        ]
+    },
+    {
+        "featureType": "administrative.country",
+        "elementType": "labels",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "administrative.country",
+        "elementType": "labels.text",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "administrative.province",
+        "elementType": "all",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "administrative.locality",
+        "elementType": "all",
+        "stylers": [
+            {
+                "visibility": "off"
+            },
+            {
+                "saturation": "-100"
+            },
+            {
+                "lightness": "30"
+            }
+        ]
+    },
+    {
+        "featureType": "administrative.neighborhood",
+        "elementType": "all",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "administrative.land_parcel",
+        "elementType": "all",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "landscape",
+        "elementType": "all",
+        "stylers": [
+            {
+                "visibility": "simplified"
+            },
+            {
+                "gamma": "0.00"
+            },
+            {
+                "lightness": "74"
+            }
+        ]
+    },
+    {
+        "featureType": "landscape",
+        "elementType": "geometry",
+        "stylers": [
+            {
+                "color": "#000000"
+            },
+            {
+                "lightness": 50
+            }
+        ]
+    },
+    {
+        "featureType": "landscape",
+        "elementType": "labels",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "landscape",
+        "elementType": "labels.text",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "landscape.man_made",
+        "elementType": "all",
+        "stylers": [
+            {
+                "lightness": "3"
+            }
+        ]
+    },
+    {
+        "featureType": "poi",
+        "elementType": "all",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "poi",
+        "elementType": "geometry",
+        "stylers": [
+            {
+                "color": "#000000"
+            },
+            {
+                "lightness": 21
+            }
+        ]
+    },
+    {
+        "featureType": "poi",
+        "elementType": "labels",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "poi",
+        "elementType": "labels.text",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "road",
+        "elementType": "all",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "road",
+        "elementType": "geometry",
+        "stylers": [
+            {
+                "visibility": "off"
+            },
+            {
+                "color": "#424242"
+            },
+            {
+                "lightness": "-61"
+            }
+        ]
+    },
+    {
+        "featureType": "road",
+        "elementType": "labels",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "road",
+        "elementType": "labels.text",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "road.highway",
+        "elementType": "geometry.fill",
+        "stylers": [
+            {
+                "color": "#000000"
+            },
+            {
+                "lightness": 17
+            }
+        ]
+    },
+    {
+        "featureType": "road.highway",
+        "elementType": "geometry.stroke",
+        "stylers": [
+            {
+                "color": "#000000"
+            },
+            {
+                "lightness": 29
+            },
+            {
+                "weight": 0.2
+            }
+        ]
+    },
+    {
+        "featureType": "road.arterial",
+        "elementType": "geometry",
+        "stylers": [
+            {
+                "color": "#000000"
+            },
+            {
+                "lightness": 18
+            }
+        ]
+    },
+    {
+        "featureType": "road.local",
+        "elementType": "geometry",
+        "stylers": [
+            {
+                "color": "#000000"
+            },
+            {
+                "lightness": 16
+            }
+        ]
+    },
+    {
+        "featureType": "transit",
+        "elementType": "geometry",
+        "stylers": [
+            {
+                "color": "#2a2727"
+            },
+            {
+                "lightness": "-61"
+            },
+            {
+                "saturation": "-100"
+            },
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "transit",
+        "elementType": "labels",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "water",
+        "elementType": "geometry",
+        "stylers": [
+            {
+                "color": "#a9a9a9"
+            },
+            {
+                "lightness": 17
+            }
+        ]
+    },
+    {
+        "featureType": "water",
+        "elementType": "labels",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    },
+    {
+        "featureType": "water",
+        "elementType": "labels.text",
+        "stylers": [
+            {
+                "visibility": "off"
+            }
+        ]
+    }
+]
+Map.setOptions('grey', {'Grey': grey});

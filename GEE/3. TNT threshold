@@ -1,0 +1,58 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var JRC = ee.ImageCollection("JRC/GFC2020/V2"),
+    aoi = ee.FeatureCollection("projects/ee-cocoacmr/assets/admin/CMR_cocoa_aoi_GAUL");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+//determine the best threshold for the TNT map
+var tprob = ee.Image("projects/ee-cocoacmr/assets/outputs/CMR_TProb_2020");
+var points = ee.FeatureCollection("projects/ee-cocoacmr/assets/feature_data/CMR_2020_LC_types_ceo_ref_val");
+Map.addLayer(tprob,{min:0, max:100, palette:['lightgrey','lightgreen','green']}, 'TNT probability')
+var thresholds = ee.List.sequence(30, 70, 1);
+var results = thresholds.map(function(thresh) {
+  thresh = ee.Number(thresh);
+  var binarized = tprob.select('classification').gt(thresh).rename('pred');
+  var sampled = binarized.sampleRegions({
+    collection: points,
+    properties: ['FNF_2020_Ref'],
+    scale: 100,
+    geometries: false
+  }).map(function(f) {
+    return f.set('ref', f.get('FNF_2020_Ref'));
+  });
+  var confusion = sampled.errorMatrix('ref', 'pred');
+  var matrix = ee.Array(confusion.array());
+  var TP = matrix.get([1, 1]);
+  var FP = matrix.get([0, 1]);
+  var FN = matrix.get([1, 0]);
+  var precision = TP.divide(TP.add(FP));
+  var recall = TP.divide(TP.add(FN));
+  var f1 = precision.multiply(recall).multiply(2)
+         .divide(precision.add(recall));
+  f1 = ee.Number.parse(f1.format('%.6f'));
+    return ee.Feature(null, {
+      threshold: thresh,
+      F1: f1
+  });
+});
+var f1Scores = ee.FeatureCollection(results);
+print('F1 Scores per Threshold', f1Scores.reduceColumns(ee.Reducer.toList(2), ['threshold', 'F1']));
+
+// Find the threshold with the highest F1 score
+var maxF1 = f1Scores.reduceColumns(ee.Reducer.max(), ['F1']).get('max');
+var bestThreshold = f1Scores.filter(ee.Filter.eq('F1', maxF1)).first();
+print('Best Threshold:', bestThreshold.get('threshold'));
+print('Maximum F1 Score:', bestThreshold.get('F1'));
+
+var chart = ui.Chart.feature.byFeature(f1Scores, 'threshold', ['F1'])
+  .setChartType('ColumnChart')
+  .setOptions({
+    title: 'F1 Score by Threshold',
+    hAxis: { title: 'Threshold (%)' },
+    vAxis: { title: 'F1 Score', minValue: 0.75, maxValue: 1 },
+    legend: { position: 'none' },
+    colors: ['#1d6b99'],
+    bar: { groupWidth: '75%' },
+    tooltip: { textStyle: { fontSize: 12 }, trigger: 'focus', isHtml: true }
+  });
+print(chart);
+
+Map.addLayer(JRC.mosaic().gt(0).selfMask().clip(aoi),{palette: 'yellow'}, 'JRC 2020',false)

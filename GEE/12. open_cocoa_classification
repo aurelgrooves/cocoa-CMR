@@ -1,0 +1,146 @@
+/*******************************************************
+ * Cocoa Probability Mapping and Evaluation
+ * -----------------------------------------------------
+ * Demonstrates how to:
+ *  - Train a Gradient Tree Boosting model on embeddings
+ *  - Generate probability outputs
+ *  - Inspect feature importance
+ *  - Convert probabilities to binary predictions
+ *  - Evaluate model accuracy at a threshold
+ *******************************************************/
+
+
+// -----------------------------------------------------
+// 1. Load AOI and training samples
+// -----------------------------------------------------
+var aoi = ee.FeatureCollection(
+  "projects/ee-cocoacmr/assets/admin/CMR_national_aoi_GAUL"
+);
+
+var samples = ee.FeatureCollection(
+  "projects/ee-cocoacmr/assets/training_data/openSunCocoaFinal_maskedGeom"
+);
+
+
+// -----------------------------------------------------
+// 2. Load satellite embeddings
+// -----------------------------------------------------
+var embeddings = ee.ImageCollection('GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL')
+  .filter(ee.Filter.date('2023-01-01', '2024-01-01'))
+  .filterBounds(aoi)
+  .mosaic()
+  .clip(aoi);
+
+
+// -----------------------------------------------------
+// 3. Split samples into training/testing
+// -----------------------------------------------------
+var split = 0.9;
+var seed  = 32;
+var samplesRnd = samples.randomColumn('rand', seed);
+var training = samplesRnd.filter(ee.Filter.lt('rand', split));
+var testing  = samplesRnd.filter(ee.Filter.gte('rand', split));
+
+
+// -----------------------------------------------------
+// 4. Train Gradient Tree Boosting classifier
+// -----------------------------------------------------
+var gbdt = ee.Classifier.smileGradientTreeBoost({
+    numberOfTrees: 100,
+    shrinkage: 0.05,
+    maxNodes: 8
+  })
+  .setOutputMode('PROBABILITY')
+  .train({
+    features: training,
+    classProperty: 'class',
+    inputProperties: embeddings.bandNames()
+  });
+
+
+// -----------------------------------------------------
+// 5. Generate probability map
+// -----------------------------------------------------
+var prob = embeddings.classify(gbdt).multiply(100);
+Map.centerObject(aoi);
+Map.addLayer(prob, {min: 0, max: 100, palette: ["white", "yellow", "orange", "red", "purple"]},
+              'Cocoa Probability (%)', true);
+
+
+// -----------------------------------------------------
+// 6. Explain model feature importance
+// -----------------------------------------------------
+var explain = gbdt.explain();
+print('Model Explanation:', explain);
+
+var importance = ee.Dictionary(explain.get('importance'));
+var keys = importance.keys();
+print('Feature importance keys:', keys);
+
+// Create chart of top 30 most important features
+var featImp = ee.FeatureCollection(keys.map(function(k) {
+  return ee.Feature(null, {
+    band: k,
+    importance: importance.get(k)
+  });
+}));
+var sorted = featImp.sort('importance', false);
+var chart = ui.Chart.feature.byFeature(sorted.limit(30), 'band', 'importance')
+  .setChartType('ColumnChart')
+  .setOptions({
+    title: 'Top 30 Most Important Features',
+    hAxis: {title: 'Band'},
+    vAxis: {title: 'Importance'},
+    legend: {position: 'none'}
+  });
+print(chart);
+
+
+// -----------------------------------------------------
+// 7. Evaluate model performance (thresholded)
+// -----------------------------------------------------
+// Attach predicted probabilities to each test feature
+var tested = testing.classify(gbdt);
+print('Properties on test feature:', tested.first().propertyNames());
+
+// Remove features without valid predictions
+var valid = tested.filter(ee.Filter.notNull(['classification']));
+
+// Apply threshold (0.5) to convert probabilities into binary predictions
+var withPred = valid.map(function(f) {
+  var p1 = ee.Number(f.get('classification'));
+  var pred = p1.gt(0.5).int();  // threshold at 50%
+  return f.set('predicted', pred);
+});
+
+// Compute confusion matrix and summary metrics
+var cm = withPred.errorMatrix('class', 'predicted');
+print('Confusion Matrix @ 0.5:', cm);
+print('Overall accuracy:', cm.accuracy());
+print('Producer’s accuracies:', cm.producersAccuracy());
+print('Consumer’s accuracies:', cm.consumersAccuracy());
+
+ 
+// -----------------------------------------------------
+// 8. Optional: Export probability map
+// -----------------------------------------------------
+/*Export.image.toDrive({
+  image: prob,
+  description: 'Cocoa_Probability_2023',
+  folder: 'GEE_Exports',
+  region: aoi.geometry(),
+  scale: 30,
+  maxPixels: 1e13
+});
+*/
+
+/*******************************************************
+ * Notes:
+ * - The classifier outputs continuous probabilities.
+ * - Accuracy evaluation here uses a 0.5 threshold to
+ *   convert probabilities into discrete predictions.
+ * - Adjust the threshold to optimize trade-offs
+ *   between omission and commission errors.
+ * - Feature importance highlights the relative
+ *   contribution of embedding bands to classification.
+ *******************************************************/

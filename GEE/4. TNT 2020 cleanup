@@ -1,0 +1,153 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var JRC = ee.ImageCollection("JRC/GFC2020/V2"),
+    planetViz = {"opacity":1,"bands":["red","green","blue"],"min":189,"max":889,"gamma":1};
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+//// viz settings //// 
+var palettes=require('users/gena/packages:palettes');
+
+var aoi = ee.FeatureCollection('projects/ee-cocoacmr/assets/admin/cmr_admbnda_adm0_1kbuffer')
+Map.centerObject(aoi,8)
+
+var Planet2020 = ee.Image('projects/ee-cocoacmr/assets/imagery/planet_mosaic_2020')
+Map.addLayer(Planet2020,planetViz, 'Planet 2020', false)
+var TNTProb = ee.Image('projects/ee-cocoacmr/assets/outputs/CMR_TProb_2020')
+Map.addLayer(TNTProb,{min: 0, max: 95, palette: palettes.matplotlib.viridis[7]}, 'TNT Prob' )
+///check accuracy at different thresholds
+
+// get threshold from TNT_threshold analysis
+var thresh = 62
+var version = 2
+
+///////////////////// Non Forest Layers to remove forest 
+var settled = ee.ImageCollection('projects/sat-io/open-datasets/WSF/WSF_2019').mosaic().eq(255).unmask().clip(aoi)
+Map.addLayer(settled,{palette:['black','red']}, 'settled 2019',false)
+var croplands2011 = ee.ImageCollection("users/potapovpeter/Global_cropland_2011").mosaic().unmask().clip(aoi)
+var croplands2015 = ee.ImageCollection("users/potapovpeter/Global_cropland_2015").mosaic().unmask().clip(aoi)
+var croplands2019 = ee.ImageCollection("users/potapovpeter/Global_cropland_2019").mosaic().unmask().clip(aoi)
+
+var croplands = croplands2019.max(croplands2015).max(croplands2011)
+Map.addLayer(croplands,{min:0, max:1, palette:['grey','gold']}, 'croplands', false)
+
+var ESA_worldcover = ee.ImageCollection("ESA/WorldCover/v100").first()
+var ESA_crops = ESA_worldcover.eq(40).unmask().clip(aoi)
+
+// Oil Palm map
+var oilPalm = ee.ImageCollection('BIOPAMA/GlobalOilPalm/v1').select('classification').mosaic().clip(aoi);
+Map.addLayer(oilPalm, {}, 'Global Oil Palm', false)
+var OP_descals = ee.ImageCollection("BIOPAMA/GlobalOilPalm/v1").mosaic()
+var OP_descals = OP_descals.lt(3).clip(aoi).unmask()
+Map.addLayer(OP_descals.clip(aoi),{}, 'Oil Palm Descals',false)
+
+var DigAF_crops = ee.ImageCollection('projects/sat-io/open-datasets/DEAF/CROPLAND-EXTENT/prob').mosaic().unmask().clip(aoi).gte(70)
+Map.addLayer(DigAF_crops,{},'Digital Africa croplands', false)
+
+//WorldCereal is for 2021
+var WorldCereal = ee.ImageCollection('ESA/WorldCereal/2021/MODELS/v100').filter('product == "temporarycrops"').mosaic().unmask().clip(aoi) 
+// Get a global mosaic for all agro-ecological zone (AEZ) of temporary crops
+var temporarycrops = WorldCereal.select('classification').eq(100);
+Map.addLayer(temporarycrops,{min:0, max: 1, palette: ['grey','orange']}, 'crops ESA World Cereal', false)
+
+var GHSL_C = ee.ImageCollection("JRC/GHSL/P2023A/GHS_BUILT_S_10m").select('built_surface')
+var GHSL = GHSL_C.mosaic().clip(aoi).unmask()
+Map.addLayer(GHSL,{min:0, max:100, palette:['white','red']}, 'GHSL',false)
+
+// Watermask
+var datamask = ee.Image('UMD/hansen/global_forest_change_2020_v1_8').select('datamask');
+var surfaceWater = ee.Image('JRC/GSW1_4/GlobalSurfaceWater')
+var waterMask = surfaceWater.select('transition').unmask()
+var waterMask = waterMask.eq(1).or(waterMask.eq(2)).or(waterMask.eq(7))
+Map.addLayer(waterMask,{min:0, max:1, palette: ['black','blue']}, 'Surface Water', false)
+//Map.addLayer(surfaceWater.select('max_extent'),{}, 'max extent')
+// Extract the bit(s) corresponding to permanent water bodies
+
+// Display the permanent water mask
+Map.addLayer(waterMask.selfMask(), {palette: ['blue']}, 'Permanent Water Bodies',false);
+//////////////////// Plantation/planted forest
+// Plantations
+var filter_TC = 'Tree crops'
+var filter_Pl = 'Planted forest'
+
+//**SDPT v1 that we used to build the JRC Global cover map
+var cmr_pl_v1 = (ee.Image.constant(1)).clip(ee.FeatureCollection('users/bourgoinclement2/SDPT/cmr').filter(ee.Filter.inList('plant_ag', [filter_Pl]))).unmask()//.filter(ee.Filter.inList('plant_ag', ['Planted forest']))).unmask();
+var cmr_tc_v1 = (ee.Image.constant(1)).clip(ee.FeatureCollection('users/bourgoinclement2/SDPT/cmr').filter(ee.Filter.inList('plant_ag', [filter_TC]))).unmask()//.filter(ee.Filter.inList('plant_ag', ['Planted forest']))).unmask();
+
+var plantations = cmr_pl_v1.or(cmr_tc_v1)
+Map.addLayer(plantations,{}, 'Plantations', false)
+
+/////////////////// Combine the layers using the maximum value at each pixel
+var all_NF_max = settled.add(croplands.unmask()).add(ESA_crops).add(DigAF_crops).add(OP_descals.unmask()).add(temporarycrops.unmask()).add(GHSL).add(plantations).clip(aoi);
+// Set the value to 1 if any of the layers are 1
+var all_NF = all_NF_max.gt(0).unmask();
+Map.addLayer(all_NF, {}, 'All NF layers',false)
+
+//////////////////------------clean up with other layers
+
+var prob_w_water = waterMask.where(waterMask.eq(1), 3).where(waterMask.eq(0), TNTProb);
+var prob_clean = prob_w_water.where(all_NF.eq(1),2).where(all_NF.neq(1),prob_w_water).clip(aoi).rename('FNFW');
+Map.addLayer(prob_clean,{},'clean classification', false)
+//print('Projection, crs, and crs_transform:', class_clean.projection());
+//print('Scale in meters:', class_clean.projection().nominalScale());
+
+/////////////////-------------threshold and add MMU 0.5 ha
+var class_clean = prob_clean.gt(thresh).unmask().clip(aoi)
+
+// Define the resolution and MMU
+var resolution = 10; // in meters
+var mmuArea = 0.5; // in hectares
+var mmuPixels = (mmuArea * 10000) / (resolution * resolution); // Convert hectares to number of pixels
+
+// Function to apply MMU to each class
+var applyMMU = function(image, classValue) {
+  // Create a binary mask for the class
+  var classMask = image.eq(classValue);
+  
+  // Calculate the connected pixel count
+  var connectedPixels = classMask.connectedPixelCount(mmuPixels, true);
+  
+  // Apply the MMU filter
+  var filteredMask = classMask.updateMask(connectedPixels.gte(mmuPixels));
+  
+  // Return the filtered class
+  return image.where(filteredMask, classValue).updateMask(filteredMask);
+};
+ 
+// Apply MMU to each class
+var class1 = applyMMU(class_clean, 1);
+var class2 = applyMMU(class_clean, 2);
+var class3 = applyMMU(class_clean, 3);
+
+var JRC = JRC.mosaic().clip(aoi)
+Map.addLayer(JRC,{palette:'darkgreen'}, 'JRC 2020',false)
+// Combine the filtered classes into a single image
+//var mmuFNF2020 = class1.unmask(0).add(class2.unmask(0)).add(class3.unmask(0)).clip(aoi).rename('FNF_2020');
+var mmuFNF2020 = class1.unmask(0).clip(aoi).rename('FNF_2020');
+
+
+Map.addLayer(mmuFNF2020.eq(0),{}, 'MMU eq 0',false)
+// Display the result
+Map.addLayer(mmuFNF2020.selfMask(),{palette: ['green']}, 'classified forest with MMU', true)
+var diff = JRC.unmask().subtract(mmuFNF2020)
+Map.addLayer(diff,{min:-1,max:1, palette:['red','blue','yellow']}, 'JRC diff: (blue=same; red = less forest; yellow= more forest',false)
+
+////////////////////////-----Export
+Export.image.toAsset({
+  image: mmuFNF2020,
+  description: 'CMR_TNTMMU_2020_'+version, 
+  assetId: 'outputs/CMR_TNTMMU_2020_'+version, 
+  region:aoi,
+  scale: 10, 
+  pyramidingPolicy: 'MODE',
+  //crs: commonProj,
+  maxPixels: 1e13, 
+  })
+  
+Export.image.toAsset({
+  image: class_clean,
+  description: 'CMR_TNTW_2020_'+version, 
+  assetId: 'outputs/CMR_TNTW_2020_'+version, 
+  region:aoi,
+  scale: 10, 
+  pyramidingPolicy: 'MODE',
+  //crs: commonProj,
+  maxPixels: 1e13, 
+  })

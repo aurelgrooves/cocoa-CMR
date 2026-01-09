@@ -1,0 +1,170 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var geometry = /* color: #d63000 */ee.Geometry.MultiPoint(),
+    aoi = ee.FeatureCollection("projects/ee-cocoacmr/assets/admin/CMR_cocoa_aoi_GAUL"),
+    TNT = ee.Image("projects/ee-cocoacmr/assets/land_cover/CMR_TNTMMU_2020"),
+    cocoa_asset = ee.Image("projects/ee-cocoacmr/assets/outputs/CMR_cocoaClasses_2020_v1_1"),
+    wiki = ee.FeatureCollection("projects/ee-cocoacmr/assets/training_data/geowiki_natural_forests_reference_data");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var SPOT2020 =ee.ImageCollection('projects/cafi_fao_congo/SPOT_CMR/SPOT_UCLouvain_2019_2020')
+Map.addLayer(SPOT2020,{}, 'SPOT data')
+Map.centerObject(aoi,8)
+var NF = TNT.neq(1)
+var F =TNT.eq(1)
+
+Map.addLayer(TNT,{min:0, max:1, palette:['grey','green'] }, 'TNT',false)
+
+var openAllBands = ee.Image("projects/ee-cocoacmr/assets/OpenSunCocoav2/2020").select("p_mean", "epi_std","ale")
+var agroAllBands = ee.Image("projects/ee-cocoacmr/assets/agroforestryv2/2020").select("p_mean", "epi_std","ale")
+var opensun = ee.Image("projects/ee-cocoacmr/assets/OpenSunCocoav2/2020").select("p_mean")
+var agroforestry = ee.Image("projects/ee-cocoacmr/assets/agroforestryv2/2020").select("p_mean")
+Map.addLayer(opensun.selfMask(), {min:1, max:100, palette: ['yellow', 'orange', 'red','purple','black']}, 'open sun',false)
+Map.addLayer(agroforestry.selfMask(), {min:1, max:100, palette: ['yellow', 'orange', 'red','purple','black']}, 'agroforestry',false)
+
+var agro_thresh = agroforestry.gt(60)
+var open_thresh = opensun.gt(60)
+
+Map.addLayer(agro_thresh.selfMask(),{palette:'yellow'}, 'agro threshold', false)
+Map.addLayer(open_thresh.selfMask(),{palette:'orange'}, 'open threshold', false)
+
+var epiAgro = ee.Image("projects/ee-cocoacmr/assets/agroforestryv2/2020").select('epi_std').divide(100).updateMask(agro_thresh)
+var epiOpen = ee.Image("projects/ee-cocoacmr/assets/OpenSunCocoav2/2020").select('epi_std').divide(100).updateMask(open_thresh)
+
+var aleAgro = ee.Image("projects/ee-cocoacmr/assets/agroforestryv2/2020").select('ale').divide(100).updateMask(agro_thresh)
+var aleOpen = ee.Image("projects/ee-cocoacmr/assets/OpenSunCocoav2/2020").select('ale').divide(100).updateMask(open_thresh)
+
+Map.addLayer(epiAgro, {min:0, max:0.1, palette:["white","yellow","orange","red","purple"]}, "epiAgro", false)
+Map.addLayer(epiOpen, {min:0, max:0.1, palette:["white","yellow","orange","red","purple"]}, "epiOpen", false)
+
+Map.addLayer(aleAgro, {min:0, max:0.1, palette:["white","yellow","orange","red","purple"]}, "aleAgro", false)
+Map.addLayer(aleOpen, {min:0, max:0.1, palette:["white","yellow","orange","red","purple"]}, "aleOpen", false)
+
+// Compute stats
+var epiAgroStats = epiAgro.reduceRegion({
+  reducer: ee.Reducer.mean().combine({
+    reducer2: ee.Reducer.stdDev(),
+    sharedInputs: true
+  }),
+  geometry: aoi,
+  scale: 100,
+  bestEffort: true,
+  tileScale: 8
+});
+
+print('Agro Mean and StdDev:', epiAgroStats);
+
+var epiOpenStats = epiOpen.reduceRegion({
+  reducer: ee.Reducer.mean().combine({
+    reducer2: ee.Reducer.stdDev(),
+    sharedInputs: true
+  }),
+  geometry: aoi,
+  scale: 100,
+  bestEffort: true,
+  tileScale: 8
+});
+
+print('Open Mean and StdDev:', epiOpenStats);
+
+var agro_mask = agro_thresh.gte(0).and(aleAgro.lt(0.1)).unmask()
+var open_mask = open_thresh.gte(0).and(aleOpen.lt(0.1)).unmask()
+
+var cocoa_class = ee.Image(0)
+  .where(open_mask.eq(1), 1)
+  .where(agro_mask.eq(1), 2).updateMask(F)
+
+Map.addLayer(cocoa_class.selfMask(),{min:1, max:2, palette: ['#8bc34a', '#1b5e20'] },"cocoa class");
+//Map.addLayer(cocoa_asset,{min:0, max:2, palette: ['#ffffff', '#8bc34a', '#1b5e20'] },"cocoa asset");
+ 
+print(cocoa_class.projection())
+ 
+var cicc = ee.FeatureCollection("projects/ee-cocoacmr/assets/training_data/CICC_all_polys")
+
+Map.addLayer(cicc,{},"cicc", false)
+
+//remove builtup
+var ESA_worldcover = ee.ImageCollection("ESA/WorldCover/v100").first()
+var ESA_builtup = ESA_worldcover.eq(50).unmask().clip(aoi)
+Map.addLayer(ESA_builtup,{},'ESA Builtup', false)
+var builtup = ee.ImageCollection('JRC/GHSL/P2023A/GHS_BUILT_S_10m').first().select('built_surface').toInt()
+var builtup = builtup.gt(0).unmask().clip(aoi)
+Map.addLayer(builtup,{}, 'built up GHS', false)
+var settled = ee.ImageCollection('projects/sat-io/open-datasets/WSF/WSF_2019').mosaic().unmask().clip(aoi)
+Map.addLayer(settled,{}, 'settled',false)
+var humSurface = settled.gt(0).or(ESA_builtup.eq(1)).or(builtup.gt(0))
+Map.addLayer(humSurface, {min:0, max:1,palette:['black','purple']}, 'human surfaces', false)
+
+//roads
+var grip4_africa = ee.FeatureCollection("projects/sat-io/open-datasets/GRIP4/Africa").filterBounds(aoi);
+var froads = ee.FeatureCollection("projects/wurnrt-loggingroads/assets/distribution/forestroads_afr_2019-01_2024-12").filterBounds(aoi)
+var roads = froads.merge(grip4_africa)
+Map.addLayer(roads,{}, 'all roads', false)
+
+// Buffer roads by 10 meters each side
+var buffered_roads = roads.map(function(f) {
+  return ee.Feature(f.buffer(10)).set('val', 1);
+});
+Map.addLayer(buffered_roads,{}, 'buffered roads',false)
+
+// Rasterize with cocoa_class projection
+var roads_raster = buffered_roads
+  .reduceToImage({
+    properties: ['val'],
+    reducer: ee.Reducer.first()
+  })
+  .clip(aoi)
+  .unmask(0); // roads = 1, others = 0
+
+Map.addLayer(roads_raster, {min: 0, max: 1, palette: ['white', 'black']}, 'Roads Raster',false);
+
+var not_roads = roads_raster.unmask().neq(1).clip(aoi)
+var not_buildings = humSurface.unmask().neq(1).clip(aoi)
+Map.addLayer(not_roads,{}, 'not roads', false)
+
+var cocoa_clean = cocoa_class.updateMask(not_buildings).selfMask().toInt().rename('cocoa_classes')
+Map.addLayer(cocoa_clean, {min:1, max:2, palette:['brown','orange']}, 'cocoa clean')
+
+var area = cocoa_clean.gt(0).multiply(ee.Image.pixelArea().divide(10000))
+      .reduceRegion({
+        reducer: ee.Reducer.sum(),
+        geometry: aoi,
+        scale: 200,
+        maxPixels: 1e13
+      })
+      .get('cocoa_classes');
+
+print(area, 'total coao area')
+
+Export.image.toAsset({
+  image:cocoa_clean.rename('cocoaClasses'),
+  description: 'cocoaClasses_asset',
+  assetId:'projects/ee-cocoacmr/assets/outputs/CMR_cocoaClasses_2020_v1_1',
+  region:aoi,
+  scale:10, 
+  maxPixels:1e13})
+  
+Export.image.toCloudStorage({
+  image:cocoa_clean.rename('cocoaClasses').toInt8(),
+  description: 'cocoaClasses_cloud',
+  bucket:'cocoa-cmr',
+  region: aoi,
+  scale:10, 
+  maxPixels:1e13})
+
+Export.image.toAsset({
+  image:openAllBands,
+  description: 'opensun_asset',
+  assetId:'projects/ee-cocoacmr/assets/outputs/CMR_fullSunCocoaProb_2020_v1_3',
+  region:aoi,
+  scale:10, 
+  maxPixels:1e13})
+  
+Export.image.toAsset({
+  image:agroAllBands,
+  description: 'agro_asset',
+  assetId:'projects/ee-cocoacmr/assets/outputs/CMR_agroforestryCocoaProb_2020_v1_3',
+  region:aoi,
+  scale:10, 
+  maxPixels:1e13})
+  
+  
+

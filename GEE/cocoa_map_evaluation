@@ -1,0 +1,474 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var errorAgroCocoa = /* color: #d63000 */ee.FeatureCollection(
+        [ee.Feature(
+            ee.Geometry.Point([12.287719989533791, 3.9454438514417323]),
+            {
+              "cocoa": 0,
+              "system:index": "0"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([12.286046291108498, 3.9471563951038933]),
+            {
+              "cocoa": 0,
+              "system:index": "1"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([12.298620486970314, 3.946599818801026]),
+            {
+              "cocoa": 0,
+              "system:index": "2"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([12.306559825654396, 3.9457007332161624]),
+            {
+              "cocoa": 0,
+              "system:index": "3"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([12.313383365388283, 3.9471992086502157]),
+            {
+              "cocoa": 0,
+              "system:index": "4"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([12.026695411630568, 3.7614768984989415]),
+            {
+              "cocoa": 0,
+              "system:index": "5"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([12.116645973154005, 3.763532395087438]),
+            {
+              "cocoa": 0,
+              "system:index": "6"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([12.339625528657212, 3.9625996525546254]),
+            {
+              "cocoa": 0,
+              "system:index": "7"
+            }),
+        ee.Feature(
+            ee.Geometry.Point([12.389235666596665, 3.9825501528606266]),
+            {
+              "cocoa": 0,
+              "system:index": "8"
+            })]),
+    openCocoaexamples = /* color: #28d623 */ee.FeatureCollection(
+        [ee.Feature(
+            ee.Geometry.Point([11.451549347124107, 4.582973027695222]),
+            {
+              "cocoa": 1,
+              "system:index": "0"
+            })]),
+    SPOTparam = {"opacity":1,"bands":["b1","b2","b3"],"min":0,"max":129,"gamma":1},
+    errorOpen = /* color: #b822d6 */ee.FeatureCollection([]);
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+// ---------------- Thresholds (adjust) ----------------
+var openThreshold = 90;
+var agroThreshold = 90;
+
+var openAleThreshold = 10;
+var agroAleThreshold = 10;
+// --------------------------------------------------------
+
+var palettes = require('users/gena/packages:palettes'); 
+
+// AOI + base layers
+var aoi = ee.FeatureCollection('projects/ee-cocoacmr/assets/admin/CMR_cocoa_aoi_GAUL');
+var planet = ee.Image("projects/ee-cocoacmr/assets/imagery/planet_mosaic_2020");
+var F = ee.Image('projects/ee-cocoacmr/assets/land_cover/CMR_TNTMMU_2020');
+var embeddings = ee.ImageCollection("GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL")
+
+Map.setCenter(11.505, 3.93, 9);
+Map.addLayer(
+  planet.clip(aoi),
+  {min:0,max:2000,bands:"red,green,blue"},
+  "Planet 2020"
+);
+
+var palettes = require('users/gena/packages:palettes');
+
+// Load collection.
+var dataset = ee.ImageCollection('GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL');
+var embeddings = dataset
+      .filterDate('2024-01-01', '2024-12-31')
+      .filterBounds(aoi)
+      .mosaic();
+      
+var intercept =-4.71184029686669  // paste from logit_coeffs.json
+var coefs = ee.Dictionary({
+    "A00": -26.910883785347423,
+    "A01": 15.422764771841383,
+    "A02": -10.516164792685867,
+    "A03": -23.159800416462787,
+    "A04": 49.26701582713038,
+    "A05": 5.328091315646497,
+    "A06": -8.095511572282405,
+    "A07": 26.492640393500917,
+    "A08": -24.93229428117273,
+    "A09": 4.51534955552125,
+    "A10": -2.7628052126535483,
+    "A11": -8.205604408857623,
+    "A12": 8.069847067343057,
+    "A13": -6.9694388996610845,
+    "A14": 17.97460541405923,
+    "A15": 13.622632668941472,
+    "A16": -5.9738580442367875,
+    "A17": 6.175783624060573,
+    "A18": -1.2066975356806497,
+    "A19": -4.696603979963149,
+    "A20": 0.43724033448143584,
+    "A21": -6.192324258383799,
+    "A22": -11.576119729005484,
+    "A23": 5.373780770496585,
+    "A24": 33.009484074941696,
+    "A25": -8.242889023534417,
+    "A26": -9.979568905209923,
+    "A27": 36.4298854372694,
+    "A28": -15.307449285398611,
+    "A29": -1.869321192357497,
+    "A30": -0.7727014118717401,
+    "A31": -9.96527755103149,
+    "A32": -0.8411378771169807,
+    "A33": -2.7435443089032012,
+    "A34": 13.104954134595566,
+    "A35": 16.4098727558882,
+    "A36": -28.505733349685606,
+    "A37": -14.905461196212395,
+    "A38": 0.5610768358446395,
+    "A39": -6.70630804359807,
+    "A40": 8.644110590746614,
+    "A41": -2.1471200171927256,
+    "A42": -2.8133349370709078,
+    "A43": -1.9690053091328947,
+    "A44": 0.6867565693123153,
+    "A45": -7.64223533774024,
+    "A46": 23.126318957168465,
+    "A47": -19.207121734125582,
+    "A48": 36.43436745944267,
+    "A49": -12.06178269418065,
+    "A50": -2.3184516265184367,
+    "A51": -11.860910329128629,
+    "A52": 2.1862934087825323,
+    "A53": 12.136883979140856,
+    "A54": -29.099311564708444,
+    "A55": -7.91091819305805,
+    "A56": -66.37394018738507,
+    "A57": -9.559862420665322,
+    "A58": 9.130776476144462,
+    "A59": 2.554880420650014,
+    "A60": -7.207212650381606,
+    "A61": -20.358767822253952,
+    "A62": 5.619726291700552,
+    "A63": 18.17319645359045
+});
+// Build linear logit: b + sum_i coef_i * band_i
+var bandNames = embeddings.bandNames();
+
+var logit = ee.Image.constant(intercept);
+var bands = embeddings.bandNames();
+
+logit = ee.Image(bands.iterate(function(bn, acc){
+  bn = ee.String(bn);
+  var c = ee.Number(coefs.get(bn, 0));
+  return ee.Image(acc).add(embeddings.select(bn).multiply(c));
+}, logit));
+
+var prob = logit.multiply(-1).exp().add(1).pow(-1).rename("palm_prob");
+var cls = prob.gte(0.5).rename("palm_bin");
+
+Map.addLayer(prob.clip(aoi),  {min: 0, max: 0.95, palette: palettes.matplotlib.viridis[7]}, 'rubber')
+
+
+/******************* palm *********************************/
+
+var intercept = -16.029444640636484  // paste from logit_coeffs.json
+var coefs = ee.Dictionary({
+   "A00": 12.190523598799835,
+    "A01": -0.005638642356378605,
+    "A02": 3.6845809207964866,
+    "A03": -20.457906413133536,
+    "A04": -36.84128504713276,
+    "A05": -2.6472310496658285,
+    "A06": 16.76733215617379,
+    "A07": 5.677342070788053,
+    "A08": 58.54060721447463,
+    "A09": -6.0324654391792185,
+    "A10": -22.739246826310477,
+    "A11": 2.808453974023843,
+    "A12": -8.274069305559545,
+    "A13": 5.428507495807697,
+    "A14": 0.4813412119679212,
+    "A15": 2.5237684449574234,
+    "A16": -8.277602027684308,
+    "A17": 3.9406873642832094,
+    "A18": 6.665462178509912,
+    "A19": -1.3001474316317054,
+    "A20": -11.097909705684211,
+    "A21": -1.8984027574691864,
+    "A22": -3.292506606298187,
+    "A23": 17.323300755178476,
+    "A24": 10.22572399443715,
+    "A25": -0.17732650936704827,
+    "A26": 0.14812474222727107,
+    "A27": -12.101610606368787,
+    "A28": -1.3934111520651526,
+    "A29": -22.083364449980305,
+    "A30": 17.24965875995236,
+    "A31": -45.94681986755378,
+    "A32": 34.17255575712577,
+    "A33": 21.882878460672345,
+    "A34": -11.839449809025012,
+    "A35": 7.6576838886627385,
+    "A36": -16.577605157893835,
+    "A37": -9.61208036052212,
+    "A38": -8.352712488339321,
+    "A39": 15.753646197180853,
+    "A40": -0.6368126560645234,
+    "A41": -14.079533893123129,
+    "A42": -7.60434448909262,
+    "A43": 13.95749793509798,
+    "A44": -3.254898354608222,
+    "A45": -12.793206316684541,
+    "A46": 12.893248976514945,
+    "A47": -2.4388786035217698,
+    "A48": 0.7149160702499107,
+    "A49": 32.80203555353415,
+    "A50": 15.812486609047077,
+    "A51": -9.357759054838708,
+    "A52": -1.1955611067443253,
+    "A53": -11.809081564107792,
+    "A54": -3.98583715597332,
+    "A55": -0.5730715790403318,
+    "A56": -34.04301565370304,
+    "A57": 7.099181862790536,
+    "A58": 1.0735340504571402,
+    "A59": 8.824121711649926,
+    "A60": -1.088327833414686,
+    "A61": 2.7165925359254266,
+    "A62": 14.016924155059089,
+    "A63": 9.56478045698241
+});
+// Build linear logit: b + sum_i coef_i * band_i
+var bandNames = embeddings.bandNames();
+
+var logit = ee.Image.constant(intercept);
+var bands = embeddings.bandNames();
+
+logit = ee.Image(bands.iterate(function(bn, acc){
+  bn = ee.String(bn);
+  var c = ee.Number(coefs.get(bn, 0));
+  return ee.Image(acc).add(embeddings.select(bn).multiply(c));
+}, logit));
+
+var prob = logit.multiply(-1).exp().add(1).pow(-1).rename("palm_prob");
+var cls = prob.gte(0.5).rename("palm_bin");
+
+Map.addLayer(prob.clip(aoi),  {min: 0.1, max: 0.95, palette: palettes.matplotlib.viridis[7]}, 'palm')
+
+/******************* Raffia forest *********************************/
+
+var intercept =-42.302865608521586  // paste from logit_coeffs.json
+var coefs = ee.Dictionary({
+    "A00": 9.127282787877961,
+    "A01": 29.147222858253077,
+    "A02": 4.733397098648967,
+    "A03": -32.35562085470376,
+    "A04": -14.724363091647625,
+    "A05": 24.557864368662543,
+    "A06": -11.42939835647339,
+    "A07": -30.02332653906172,
+    "A08": -26.930996913611338,
+    "A09": 33.19725332975486,
+    "A10": 43.01261601454006,
+    "A11": -10.151746536865764,
+    "A12": 9.363828428490294,
+    "A13": -31.583476308230438,
+    "A14": 23.413972066178157,
+    "A15": -13.92102915011224,
+    "A16": -10.848847256512537,
+    "A17": 22.641976402939175,
+    "A18": -14.858244146473938,
+    "A19": 11.642689151374048,
+    "A20": 3.051303889128097,
+    "A21": -10.172170488583767,
+    "A22": -5.440645258532855,
+    "A23": 8.207770784346385,
+    "A24": 8.261385279189584,
+    "A25": -15.006061235266904,
+    "A26": 16.48620821214432,
+    "A27": 16.600881690388825,
+    "A28": 20.540403155681368,
+    "A29": -14.717306199107352,
+    "A30": 32.63613729224421,
+    "A31": -10.796031073273925,
+    "A32": -5.667697641695797,
+    "A33": 4.763329607554781,
+    "A34": 15.894692313181455,
+    "A35": -6.774685077232575,
+    "A36": -9.640119152996556,
+    "A37": 25.49420723635475,
+    "A38": -6.59387990303752,
+    "A39": -3.937161193017939,
+    "A40": -27.24971948205274,
+    "A41": 13.50996688334808,
+    "A42": -36.21762997060473,
+    "A43": -10.267824702538636,
+    "A44": -24.10556254565516,
+    "A45": -14.246877353642033,
+    "A46": -16.357240441275966,
+    "A47": -7.699666483821464,
+    "A48": -7.688174519116664,
+    "A49": -19.010927707636682,
+    "A50": 31.272142347366312,
+    "A51": -15.640676094809397,
+    "A52": 9.005754561620158,
+    "A53": 4.946018471307106,
+    "A54": 8.060199484853678,
+    "A55": 1.1677775729814892,
+    "A56": -0.44044567999477324,
+    "A57": -21.591201810683344,
+    "A58": -6.592471820951862,
+    "A59": 5.860331099419962,
+    "A60": 0.4998659160910848,
+    "A61": 8.562986303224916,
+    "A62": 4.609793299647881,
+    "A63": 35.24410791915958
+});
+// Build linear logit: b + sum_i coef_i * band_i
+var bandNames = embeddings.bandNames();
+
+var logit = ee.Image.constant(intercept);
+var bands = embeddings.bandNames();
+
+logit = ee.Image(bands.iterate(function(bn, acc){
+  bn = ee.String(bn);
+  var c = ee.Number(coefs.get(bn, 0));
+  return ee.Image(acc).add(embeddings.select(bn).multiply(c));
+}, logit));
+
+var prob = logit.multiply(-1).exp().add(1).pow(-1).rename("palm_prob");
+var cls = prob.gte(0.5).rename("palm_bin");
+
+Map.addLayer(prob.clip(aoi),  {min: 0.1, max: 0.95, palette: palettes.matplotlib.viridis[7]}, 'Raffia forest')
+
+
+var SPOT2020 = ee.ImageCollection('projects/cafi_fao_congo/SPOT_CMR/SPOT_UCLouvain_2019_2020')
+Map.addLayer(SPOT2020.max(), SPOTparam, 'SPOT 2020')
+var SPOT2022 = ee.ImageCollection('projects/cafi_fao_congo/SPOT_CMR/SPOT_UCLouvain_2021_2023')
+Map.addLayer(SPOT2022.max(), SPOTparam, 'SPOT 2022')
+// Load probability + aleatoric uncertainty layers
+var agroProb = ee.Image("projects/ee-cocoacmr/assets/outputs/CMR_agroforestryCocoaProb_2020_v1_1")
+              .select('p_mean').rename('agroProb');
+var agroAle  = ee.Image("projects/ee-cocoacmr/assets/outputs/CMR_agroforestryCocoaProb_2020_v1_1")
+              .select('ale').rename('agroAle');
+
+var openProb = ee.Image("projects/ee-cocoacmr/assets/outputs/CMR_fullSunCocoaProb_2020_v1_1")
+              .select('p_mean').rename('openProb');
+var openAle  = ee.Image("projects/ee-cocoacmr/assets/outputs/CMR_fullSunCocoaProb_2020_v1_1")
+              .select('ale').rename('openAle');
+
+// Palettes
+var probPalette = ['yellow','orange','red','purple','black'];
+var alePalette  = palettes.colorbrewer.RdYlGn[11];
+
+// Reference layer previews
+Map.layers().add(ui.Map.Layer(agroProb.selfMask(), {min:0,max:100,palette:probPalette}, 'Agroforestry probability'),false);
+Map.layers().add(ui.Map.Layer(openProb.selfMask(), {min:0,max:100,palette:probPalette}, 'Open canopy probability', false));
+Map.layers().add(ui.Map.Layer(agroAle.selfMask(), {min:0,max:25,palette:alePalette}, 'Agroforestry uncertainty', false));
+Map.layers().add(ui.Map.Layer(openAle.selfMask(), {min:0,max:25,palette:alePalette}, 'Open canopy uncertainty', false));
+
+// Legend function
+function makeLegend(title, palette, min, max) {
+  var p = ui.Panel({style:{padding:'6px', backgroundColor:'rgba(255,255,255,0.9)'}});
+  p.add(ui.Label({value:title, style:{fontWeight:'bold', fontSize:'12px', margin:'0 0 4px 0'}}));
+  
+  var grad = ui.Thumbnail({
+    image: ee.Image.pixelLonLat().select('latitude').multiply(0)
+      .add(ee.Image.pixelLonLat().select('longitude'))
+      .visualize({min:0,max:1,palette:palette}),
+    params:{bbox:'0,0,1,0.1', dimensions:'160x18'},
+    style:{margin:'4px 0'}
+  });
+  
+  p.add(grad);
+  p.add(ui.Label(min + ' → ' + max, {fontSize:'10px', margin:'0'}));
+  return p;
+}
+
+// Legend box
+var legendBox = ui.Panel({
+  layout: ui.Panel.Layout.flow('vertical'),
+  style:{position:'bottom-right', padding:'4px'}
+});
+legendBox.add(makeLegend('Probability (%)', probPalette, 0, 100));
+legendBox.add(makeLegend('Uncertainty (aleatoric)', alePalette, 0, 25));
+ui.root.add(legendBox);
+
+// Area reducer
+function areaInt(img, band, geom){
+  return ee.Number(
+    img.multiply(ee.Image.pixelArea())
+      .reduceRegion({
+        reducer: ee.Reducer.sum(),
+        geometry: geom,
+        scale: 100,
+        maxPixels: 1e13
+      })
+      .get(band)
+  ).divide(10000).round();
+}
+
+// ---------------- Masks ----------------
+var openCocoa = openProb.gt(openThreshold)
+  .and(openAle.lt(openAleThreshold))
+  .rename('openCocoa');
+
+var agroCocoa = agroProb.gt(agroThreshold)
+  .and(agroAle.lt(agroAleThreshold))
+  .and(openCocoa.eq(0))
+  .rename('agroCocoa');
+
+var totalCocoa = ee.Image(0)
+  .where(openCocoa.eq(1), 1)
+  .where(agroCocoa.eq(1), 2)
+  .updateMask(F)
+  .rename('totalCocoa')
+  .selfMask();
+
+// ---------------- Area summaries ----------------
+var openAreaEE  = areaInt(openCocoa,  'openCocoa',  aoi);
+var agroAreaEE  = areaInt(agroCocoa,  'agroCocoa',  aoi);
+var totalAreaEE = areaInt(totalCocoa, 'totalCocoa', aoi);
+
+print('Open cocoa ha', openAreaEE);
+print('Agro cocoa ha', agroAreaEE);
+print('Total cocoa ha (no overlap)', totalAreaEE);
+
+// ---------------- Map masks with dynamic names ----------------
+Map.addLayer(
+  openCocoa.selfMask(),
+  {palette:['orange']},
+  'Open cocoa mask (p>' + openThreshold + ', ale<' + openAleThreshold + ')'
+);
+
+Map.addLayer(
+  agroCocoa.selfMask(),
+  {palette:['#755b14']},
+  'Agro cocoa mask (p>' + agroThreshold + ', ale<' + agroAleThreshold + ')'
+);
+
+Map.addLayer(
+  totalCocoa.selfMask(),
+  {palette:['yellow','brown']},
+  'Combined cocoa classes'
+);
+
+//var point1 = ee.Geometry.Point([12.05145,3.76659])
+//var styled = ee.FeatureCollection([ee.Feature(point1)])
+//  .style({color: 'red', pointSize: 10});
+
+// Add to map
+//Map.addLayer(styled, {}, 'Point');
+//Map.centerObject(point1, 15);

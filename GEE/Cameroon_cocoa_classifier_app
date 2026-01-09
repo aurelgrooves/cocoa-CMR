@@ -1,0 +1,280 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var geometry = /* color: #d63000 */ee.Geometry.MultiPoint();
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+/**** GEE App: Cocoa classifier (2020), point-add mode with crosshair ****/
+/*** Paste into Code Editor. Click "Run". ***/
+ 
+/* -----------------------------
+   0) CONFIG & INPUTS
+------------------------------*/
+var bands = ee.List.sequence(0,63).map(function(i){
+  return ee.String('A').cat(ee.Number(i).format('%02d'));
+});
+var baseSamples = ee.FeatureCollection("projects/ee-cocoacmr/assets/training_data/openSunCocoaFinal");
+var EMBED_IC = ee.ImageCollection('projects/servir-ee/assets/embedSmooth');
+
+Map.setOptions('SATELLITE');
+Map.setCenter(12.8, 5.5, 8);
+
+/* -----------------------------
+   1) SIDEBAR (RIGHT): controls + metrics
+------------------------------*/
+var sidebar = ui.Panel({style:{width:'380px', padding:'8px', position:'top-right'}});
+ui.root.add(sidebar);
+
+// Controls block
+var controls = ui.Panel();
+sidebar.add(ui.Label('Cocoa Classifier — 2020', {fontWeight:'bold', fontSize:'16px'}));
+sidebar.add(controls);
+
+// Class for new points
+var classSelect = ui.Select(
+  [{label:'Positive (cocoa=1)', value:1},{label:'Negative (other=0)', value:0}],
+  null, 1
+);
+controls.add(ui.Panel([ui.Label('Label for new points'), classSelect],
+                      ui.Panel.Layout.flow('horizontal')));
+
+// Add-points mode toggle (crosshair)
+var addMode = ui.Checkbox('Add points', false, function(on){
+  Map.style().set('cursor', on ? 'crosshair' : 'auto');
+});
+controls.add(addMode);
+
+// Clear user points
+var clearPtsBtn = ui.Button({
+  label:'Clear user points',
+  onClick: function(){
+    userPts = ee.FeatureCollection([]);
+    refreshUserPointLayer();
+  }
+});
+controls.add(clearPtsBtn);
+
+// Model param: Trees only (min 10)
+var nTrees = ui.Slider({min:10, max:500, step:10, value:100, style:{stretch:'horizontal'}});
+controls.add(ui.Label('Trees'));
+controls.add(nTrees);
+
+// Run button
+var runBtn = ui.Button({
+  label:'Run',
+  style:{stretch:'horizontal', color:'white', backgroundColor:'#1f6feb'},
+  onClick: runAll
+});
+controls.add(runBtn);
+
+// === Legend (horizontal gradient 0–100) ===
+var legend = ui.Panel({
+  style: {padding:'6px', backgroundColor:'rgba(255,255,255,0.85)'}
+});
+legend.add(ui.Label('Probability (0–100)'));
+
+// Create gradient
+var gradient = ee.Image.pixelLonLat()
+  .select('longitude')
+  .add(180)
+  .divide(360)
+  .multiply(100);
+
+var gradViz = gradient.visualize({
+  min: 0,
+  max: 100,
+  palette: ['white','yellow','orange','red','purple']
+});
+
+// Add gradient bar
+legend.add(ui.Thumbnail({
+  image: gradViz,
+  params: {
+    bbox: [-180, 0, 180, 10],
+    dimensions: '256x16',
+    format: 'png'
+  },
+  style: {stretch: 'horizontal', maxHeight: '20px'}
+}));
+
+// Add labels (FIXED)
+legend.add(
+  ui.Panel(
+    [
+
+    ],
+    ui.Panel.Layout.flow('horizontal'),
+    {stretch: 'horizontal'}
+  )
+);
+
+// Attach legend
+controls.add(legend);
+
+
+
+// Separator
+sidebar.add(ui.Label('', {height:'8px'}));
+sidebar.add(ui.Label('Metrics', {fontWeight:'bold', fontSize:'16px'}));
+
+// Metrics block
+var metricsText  = ui.Label('', {whiteSpace:'pre', fontSize:'12px'});
+sidebar.add(metricsText);
+
+/* -----------------------------
+   2) USER POINT CAPTURE
+------------------------------*/
+var userPts = ee.FeatureCollection([]);
+var userLayer = ui.Map.Layer(ee.FeatureCollection([]), {color:'cyan'}, 'User points', true);
+Map.layers().add(userLayer);
+
+function refreshUserPointLayer(){
+  userLayer.setEeObject(userPts);
+}
+
+Map.onClick(function(loc){
+  if (!addMode.getValue()) return;
+  var f = ee.Feature(ee.Geometry.Point([loc.lon, loc.lat]),
+                     {class: classSelect.getValue(), source:'user'});
+  userPts = userPts.merge(ee.FeatureCollection([f]));
+  refreshUserPointLayer();  // immediate visual feedback
+});
+
+/* -----------------------------
+   3) CORE FUNCTIONS
+------------------------------*/
+// 2020 embedding with A00..A63 scaled by 1/10000
+function yearEmb2020(){
+  var selDesc = ee.List.sequence(63, 0, -1).map(function(i){
+    return ee.String('y2020_A').cat(ee.Number(i).format('%02d'));
+  });
+  var imgDesc = EMBED_IC.select(selDesc);
+  var newNames = ee.List.sequence(63, 0, -1).map(function(i){
+    return ee.String('A').cat(ee.Number(i).format('%02d'));
+  });
+  return imgDesc.mosaic().rename(newNames).divide(10000).select(bands);
+}
+
+function runAll(){
+  metricsText.setValue('Running…');
+
+  // Keep user points layer; remove others
+  Map.layers().reset([userLayer]);
+
+  var embedding = yearEmb2020();
+
+  // Ensure samples have band attributes; if not, sample from embedding
+  var baseHasA00 = ee.Algorithms.If(
+    baseSamples.size().gt(0),
+    baseSamples.first().propertyNames().contains('A00'),
+    false
+  );
+
+  var baseWithBands = ee.FeatureCollection(ee.Algorithms.If(
+    baseHasA00,
+    baseSamples,
+    embedding.sampleRegions({
+      collection: baseSamples,
+      properties: ['class'],
+      scale: 10,
+      geometries: false
+    })
+  ));
+
+  var userWithBands = embedding.sampleRegions({
+    collection: userPts,
+    properties: ['class'],
+    scale: 10,
+    geometries: false
+  });
+
+  var samples = baseWithBands.merge(userWithBands)
+                 .filter(ee.Filter.notNull(bands.add('class')));
+
+  // Fixed split/seed
+  var split = 0.9;
+  var seed  = 32;
+  var samplesRnd = samples.randomColumn('rand', seed);
+  var training = samplesRnd.filter(ee.Filter.lt('rand', split));
+  var testing  = samplesRnd.filter(ee.Filter.gte('rand', split));
+
+  // Classifier (probability output)
+  var gbdt = ee.Classifier.smileGradientTreeBoost({
+      numberOfTrees: nTrees.getValue(),
+      shrinkage: 0.05,
+      maxNodes: 8
+    })
+    .setOutputMode('PROBABILITY')
+    .train({
+      features: training,
+      classProperty: 'class',
+      inputProperties: bands
+    });
+
+  // Probability map
+  var prob = embedding.classify(gbdt).multiply(100);
+  Map.addLayer(prob, {min:0, max:100, palette:"white,yellow,orange,red,purple"}, 'Probability (%)', true);
+
+  // Test set predictions @ 0.5 threshold
+  var tested = testing.classify(gbdt);
+  var valid  = tested.filter(ee.Filter.notNull(['classification']));
+  var withPred = valid.map(function(f){
+    var p1 = ee.Number(f.get('classification'));
+    var pred = p1.gt(0.50).int();
+    return f.set('predicted', pred);
+  });
+
+  var cm = withPred.errorMatrix('class','predicted');
+
+  // ----- DO NOT DISPLAY TEST POINTS (confidential) -----
+  // Map.addLayer(...);  // intentionally removed
+
+  // Pretty metrics (no NaNs)
+  cm.evaluate(function(cmLocal){
+    var a00 = cmLocal[0][0], a01 = cmLocal[0][1];
+    var a10 = cmLocal[1][0], a11 = cmLocal[1][1];
+
+    var sum = a00 + a01 + a10 + a11;
+    function safe(dividend, divisor){ return divisor === 0 ? 0 : dividend / divisor; }
+
+    var oa  = safe(a00 + a11, sum);
+    var pa0 = safe(a00, a00 + a01), ua0 = safe(a00, a00 + a10);
+    var pa1 = safe(a11, a10 + a11), ua1 = safe(a11, a01 + a11);
+
+    var precision1 = ua1, recall1 = pa1;
+    var f1_1 = (precision1 + recall1 === 0) ? 0 : 2 * precision1 * recall1 / (precision1 + recall1);
+
+    var pe = safe((a00 + a01)*(a00 + a10) + (a10 + a11)*(a01 + a11), sum*sum);
+    var kappa = (1 - pe === 0) ? 0 : (oa - pe) / (1 - pe);
+
+    function pct(x){ return (100 * x).toFixed(2) + '%'; }
+    function pad(s,w){ s = String(s); return s.length >= w ? s : (new Array(w - s.length + 1).join(' ') + s); }
+
+    var lines = [];
+    lines.push('=== Dataset ===');
+    lines.push('Train size: ' + training.size().getInfo());
+    lines.push('Test size:  ' + testing.size().getInfo());
+    lines.push('');
+    lines.push('=== Overall ===');
+    lines.push('Overall accuracy:  ' + pct(oa));
+    lines.push('Cohen’s kappa:     ' + kappa.toFixed(4));
+    lines.push('');
+    lines.push('=== Class metrics ===');
+    lines.push('Class 0  —  PA (recall): ' + pct(pa0) + '   UA (precision): ' + pct(ua0));
+    lines.push('Class 1  —  PA (recall): ' + pct(pa1) + '   UA (precision): ' + pct(ua1));
+    lines.push('');
+    lines.push('Positive class (1):  Precision ' + pct(precision1) +
+               ' | Recall ' + pct(recall1) + ' | F1 ' + f1_1.toFixed(4));
+    lines.push('');
+    lines.push('=== Confusion Matrix (actual rows, predicted cols) ===');
+    var sep = '----------+--------+--------+';
+    var r0  = 'actual=0 | ' + pad(a00,6) + ' | ' + pad(a01,6) + ' |';
+    var r1  = 'actual=1 | ' + pad(a10,6) + ' | ' + pad(a11,6) + ' |';
+    lines.push(sep); lines.push(r0); lines.push(r1);
+
+    metricsText.setValue(lines.join('\n'));
+  });
+}
+
+/* -----------------------------
+   Notes
+------------------------------*/
+// One right-side sidebar contains both controls and metrics, so changing anchors works immediately.
+// Test points are not rendered.

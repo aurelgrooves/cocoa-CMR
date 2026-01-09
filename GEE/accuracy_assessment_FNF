@@ -1,0 +1,70 @@
+//script to assess accuracy of TNT  maps
+
+//parameters
+var aoi = ee.FeatureCollection('projects/ee-cocoacmr/assets/admin/cmr_admbnda_adm0')
+Map.centerObject(aoi,8)
+
+// global map 1 = forest, 0 = non-forest
+var JRC_map = ee.ImageCollection("JRC/GFC2020/V2").mosaic().unmask().clip(aoi).rename('classified')
+
+Map.addLayer(JRC_map, {}, 'global map')
+
+var global_map = JRC_map
+
+//national map
+var national_map = ee.Image('projects/ee-cocoacmr/assets/outputs/CMR_TNTMMU_2020').rename('classified')
+Map.addLayer(national_map,{min:0, max:1, palette: ['grey','green']}, 'National Map')
+
+//determine classes of the map to validate
+// 1 = forest, 0 = not forest
+
+var validation = ee.FeatureCollection('projects/ee-cocoacmr/assets/feature_data/CMR_2020_LC_types_ceo_ref_val')
+
+Map.addLayer(validation,{}, 'validation')
+//landuse n1 cropland, forestland, wetlands, grassland)
+//landuse n2 cocoa, palmgrove
+
+// Sample the classified map at validation points
+var validated = national_map.sampleRegions({
+  collection: validation,
+  properties: ['FNF_2020_Ref'], 
+  scale: 10,
+  geometries: true
+});
+
+// Generate confusion matrix
+var confMatrix = validated.errorMatrix('FNF_2020_Ref', 'classified');
+print('Confusion Matrix:', confMatrix);
+print('Overall Accuracy:', confMatrix.accuracy());
+print('Kappa:', confMatrix.kappa());
+
+// User's Accuracy
+var userAccuracy = confMatrix.consumersAccuracy();
+print('precision:', userAccuracy);
+
+// Producer's Accuracy
+var producerAccuracy = confMatrix.producersAccuracy();
+print('recall:', producerAccuracy);
+
+
+// Extract producer and user accuracy lists properly
+var userArray = ee.Array(confMatrix.consumersAccuracy());
+var producerArray = ee.Array(confMatrix.producersAccuracy());
+
+// Convert user accuracy row vector to flat list
+var userList = ee.List(ee.Array(userAccuracy).toList().get(0));
+
+// Convert producer accuracy column vector to flat list
+var producerList = ee.Array(producerAccuracy)
+  .toList()
+  .map(function(e) { return ee.List(e).get(0); });
+
+// Compute F1 scores
+var f1Scores = ee.List.sequence(0, userList.length().subtract(1)).map(function(i) {
+  i = ee.Number(i);
+  var ua = ee.Number(userList.get(i));
+  var pa = ee.Number(producerList.get(i));
+  return pa.multiply(ua).multiply(2).divide(pa.add(ua));
+});
+
+print('F1 Scores per class (0 = nonforest, 1 = forest):', f1Scores);

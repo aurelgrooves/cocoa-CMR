@@ -1,0 +1,63 @@
+
+
+for (var year = 2017; year < 2025; year++){
+  var im = ee.Image("projects/ee-cocoacmr/assets/OpenSunCocoav2/"+year.toString());
+  Map.addLayer(im.select("p_mean"),{min:10, max:100, palette:['white','yellow','orange','red','purple']},"open sun cocoa "+ year.toString(),false);
+  //Map.addLayer(im.select("ale"),{min:0, max:25, palette:['white','yellow','orange','red','purple']},"uncertainty "+ year.toString(),false);
+}
+
+var cicc = ee.FeatureCollection("projects/ee-cocoacmr/assets/training_data/CICC_all_polys");
+Map.addLayer(cicc,{},"cicc",false);
+
+for (var year = 2017; year < 2025; year++){
+  var im = ee.Image("projects/ee-cocoacmr/assets/agroforestryv2/"+year.toString());
+  Map.addLayer(im.select("p_mean"),{min:10, max:100, palette:['white','yellow','orange','red','purple']},"agroforestry cocoa "+ year.toString(),false);
+  //Map.addLayer(im.select("ale"),{min:0, max:25, palette:['white','yellow','orange','red','purple']},"uncertainty "+ year.toString(),false);
+}
+
+var cicc = ee.FeatureCollection("projects/ee-cocoacmr/assets/training_data/CICC_all_polys");
+Map.addLayer(cicc,{},"cicc",false);
+
+
+
+// Define legend
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+// Legend title
+legend.add(ui.Label({
+  value: 'Probability (%)',
+  style: {fontWeight: 'bold', fontSize: '14px', margin: '0 0 4px 0'}
+}));
+
+// Color palette and corresponding values
+var palette = ['white','yellow','orange','red','purple'];
+var values = [0, 25, 50, 75, 100];
+
+// Add color bar
+var colorBar = ui.Thumbnail({
+  image: ee.Image.pixelLonLat().select(0)
+          .multiply((values[values.length - 1] - values[0]) / 100)
+          .add(values[0])
+          .visualize({min: values[0], max: values[values.length - 1], palette: palette}),
+  params: {bbox:'0,0,100,10', dimensions:'100x10'},
+  style: {stretch: 'horizontal', margin: '0px 0px', maxHeight: '20px'}
+});
+legend.add(colorBar);
+
+// Add min and max labels
+var labels = ui.Panel({
+  widgets: [
+    ui.Label(values[0], {margin: '0px'}),
+    ui.Label(values[values.length - 1], {margin: '0px', textAlign: 'right', stretch: 'horizontal'})
+  ],
+  layout: ui.Panel.Layout.flow('horizontal')
+});
+legend.add(labels);
+
+// Add legend to map
+Map.add(legend);

@@ -1,0 +1,89 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var ESA_GLC = ee.ImageCollection("COPERNICUS/Landcover/100m/Proba-V-C3/Global"),
+    ESA_WorldCover = ee.ImageCollection("ESA/WorldCover/v200"),
+    JRC2020 = ee.ImageCollection("JRC/GFC2020/V1"),
+    ALOS_K_C = ee.ImageCollection("JAXA/ALOS/PALSAR/YEARLY/FNF4"),
+    countries = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level1"),
+    Hansen = ee.Image("UMD/hansen/global_forest_change_2023_v1_11"),
+    FNF_2020 = ee.Image("projects/ee-cocoacmr/assets/land_cover/CMR_TNTMMU_2020");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+//convergence disturbance layer combines all change/alert sources
+var aoi = ee.FeatureCollection('projects/ee-cocoacmr/assets/admin/cmr_admbnda_adm0_1kbuffer')
+
+Map.centerObject(aoi, 9)
+
+// Get the datamask band
+var datamask = Hansen.select('datamask');
+// Extract the bit(s) corresponding to permanent water bodies
+var waterMask = datamask.neq(2).clip(aoi).selfMask(); 
+Map.addLayer(waterMask,{},'water mask',false)
+
+var radd = ee.ImageCollection('projects/radar-wur/raddalert/v1');
+var radd_alert =  ee.Image(radd.filterMetadata('layer','contains','alert')
+                            .filterMetadata('geography','contains','africa')
+                            .sort('system:time_end', false).first());
+
+Map.addLayer(radd_alert,{}, 'RADD alerts', false)                            
+//RADD alert: 2 = unconfirmed (low confidence) alert; 3 = confirmed (high confidence) alert
+Map.addLayer(radd_alert.select('Alert'), {min:2,max:3,palette:['blue','coral']}, 'RADD alert', false)
+//RADD alert date: YYDOY (Year-Year-Day-Of-Year)
+// Filter the dataset to include only alerts before 2020
+var radd_2020 = radd_alert.select('Date').lt(21000).and(radd_alert.select('Alert').gt(2)).clip(aoi).unmask();
+Map.addLayer(radd_2020,{min:0, max:1, palette:['white','purple']}, 'radd pre 2020',false)
+
+var GFC_2020 = Hansen.select('lossyear').clip(aoi).lte(20).unmask()
+Map.addLayer(GFC_2020,{},'GFC pre 2020',false)
+
+//* Forest degradation
+var TMFDeg =ee.ImageCollection('projects/JRC/TMF/v1_2024/DegradationYear').mosaic().clip(aoi).unmask()
+var TMFDegradation= TMFDeg.lte(2020).and(TMFDeg.gte(1980)).unmask().clip(aoi)
+Map.addLayer(TMFDegradation, {}, 'TMF degradation',false)
+
+//* deforestation
+var TMFDef =ee.ImageCollection('projects/JRC/TMF/v1_2024/DeforestationYear').mosaic().clip(aoi).unmask()
+var TMFDeforestation = TMFDef.lte(2020).and(TMFDef.gte(1980)).unmask().clip(aoi)
+Map.addLayer(TMFDeforestation, {}, 'TMF deforestation',false)
+
+var disturbanceMask = (GFC_2020.unmask().eq(1)).or(radd_2020.unmask().eq(1)).or(TMFDeforestation.unmask().eq(1)).or(TMFDegradation.unmask().eq(1)).updateMask(waterMask).rename('disturbance')//.updateMask(FNF_2020)
+
+Map.addLayer(disturbanceMask,//.selfMask(), 
+//  {min: 1, max:9, palette: ['darkblue', 'blue', 'lightblue', 'white', 'red', 'orange', 'yellow', 'lightgreen', 'green', 'darkgreen']}, 
+{min:0,max:1, palette: ['green','orange']},  'Convergence Disturbance',  true
+)
+
+var persist = ee.Image("projects/forestdatapartnership/assets/community_forests/ForestPersistence_2020").clip(aoi)
+Map.addLayer(persist.gte(0.95), {}, 'persistent forest',false)
+
+var asset_id = "projects/computing-engine-190414/assets/biosphere_models/public/forest_typology/natural_forest_2020_v1_0";
+var probabilities = ee.ImageCollection(asset_id).mosaic().select("B0").divide(250);
+Map.addLayer(probabilities.mask(probabilities.neq(0)), {min: 0, max: 1, palette: ['white', 'green']},
+             "Natural forest probabilities", false)
+
+// Binned yes-no map based on a confidence threshold.
+// Use the slider to adjust the threshold.
+var layer = Map.addLayer(probabilities.gte(0.5).mask(probabilities.gte(0.9)),{palette: 'teal'},
+                         "Natural forest map at threshold", false);
+
+
+var disturbanceSum = (GFC_2020.unmask()).add(radd_2020.unmask()).add(TMFDeforestation.unmask()).add(TMFDegradation.unmask()).updateMask(waterMask).rename('disturbanceSum')
+Map.addLayer(disturbanceSum, {min:0, max:2, palette: ['grey', 'orange','red']}, 'Disturbance Overlap')
+
+Export.image.toAsset({
+  image:disturbanceMask, 
+  description: 'CMR2020_disturbanceMask', 
+  assetId: 'outputs/CMR2020_disturbanceMask', 
+  region: aoi, 
+  scale:10, 
+  pyramidingPolicy: 'MODE', 
+  maxPixels:1e13
+  })
+  
+Export.image.toAsset({
+  image:disturbanceSum, 
+  description: 'CMR2020_disturbanceSum', 
+  assetId: 'outputs/CMR2020_disturbanceSum', 
+  region: aoi, 
+  scale:10, 
+  maxPixels:1e13
+  })
+

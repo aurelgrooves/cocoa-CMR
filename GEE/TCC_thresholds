@@ -1,0 +1,72 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var CEO = ee.FeatureCollection("projects/ee-cocoacmr/assets/feature_data/CMR_2020_LC_types_ceo_ref_val");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var TCC = ee.Image('projects/ee-cocoacmr/assets/tccdata/2020')
+var palettes = require('users/gena/packages:palettes');
+var ISO = 'CMR' 
+var aoi = ee.FeatureCollection('projects/cafi_fao_congo/aoi/cafi_countries_buffer_simple').filter(ee.Filter.eq('ISO', ISO))
+Map.centerObject(aoi,8)
+Map.addLayer(aoi,{}, 'AOI',false)
+Map.addLayer(CEO,{}, 'CEO',false)
+
+Map.addLayer(TCC,{min:0,max:100,palette:['black','green']},'TCC combined', false)
+
+var TCC_band = TCC.select('b1');  // Band name is 'b'
+
+// Sample the image at points
+var sampled = TCC_band.sampleRegions({
+  collection: CEO,
+  properties: ['LC_2020_Code_Ref'],
+  scale: 10,
+  geometries: false
+});
+
+// Compute stats by class
+var groupedStats = sampled.reduceColumns({
+  reducer: ee.Reducer.mean()
+    .combine(ee.Reducer.stdDev(), '', true)
+    .combine(ee.Reducer.min(), '', true)
+    .combine(ee.Reducer.max(), '', true)
+    .group({
+      groupField: 0,
+      groupName: 'Class'
+    }),
+  selectors: ['LC_2020_Code_Ref', 'b1']
+});
+
+// Extract and print the list
+var statsList = ee.List(groupedStats.get('groups'));
+print('TCC stats by land cover class:', statsList);
+
+// Convert to FeatureCollection
+var statsFC = ee.FeatureCollection(statsList.map(function(item) {
+  item = ee.Dictionary(item);
+  return ee.Feature(null, {
+    'Class': item.get('Class'),
+    'Mean_TCC': item.get('mean'),
+    'StdDev_TCC': item.get('stdDev'),
+    'Min_TCC': item.get('min'),
+    'Max_TCC': item.get('max')
+  });
+}));
+
+// Print the table
+print('Formatted TCC stats FeatureCollection:', statsFC);
+
+// Chart: Mean TCC by Class
+var chart = ui.Chart.feature.byFeature({
+  features: statsFC,
+  xProperty: 'Class',
+  yProperties: ['Mean_TCC']
+})
+.setChartType('ColumnChart')
+.setOptions({
+  title: 'Mean Tree Canopy Cover (TCC) by Land Cover Class',
+  hAxis: { title: 'Land Cover Class (LC_2020_Code_Ref)' },
+  vAxis: { title: 'Mean TCC (%)' },
+  legend: { position: 'none' },
+  colors: ['#228B22']
+});
+
+// Show chart
+print(chart);

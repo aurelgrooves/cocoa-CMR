@@ -1,0 +1,49 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var planet = ee.Image("projects/ee-cocoacmr/assets/imagery/planet_mosaic_2020"),
+    planetParam = {"opacity":1,"bands":["red","green","blue"],"min":64,"max":817,"gamma":1},
+    deforestation = ee.ImageCollection("projects/ee-cocoacmr/assets/forestloss"),
+    aoi = ee.FeatureCollection("projects/ee-cocoacmr/assets/admin/CMR_cocoa_aoi_GAUL");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+Map.centerObject(aoi,8)
+Map.addLayer(planet,planetParam, 'Planet 2020')
+var TNT2020 = ee.Image("projects/ee-cocoacmr/assets/land_cover/CMR_TNTMMU_2020")
+Map.addLayer(TNT2020.selfMask(),{palette:['green']})
+var TCC2020 = ee.Image("projects/ee-cocoacmr/assets/tccdata/2020")
+Map.addLayer(TCC2020, {min:0, max:100, palette: ['white','darkgreen']}, 'TCC')
+
+var agroforestry = ee.Image("projects/ee-cocoacmr/assets/temp/agroCocoa")//.updateMask(TNT_2020.selfMask())
+var openCocoa = ee.Image("projects/ee-cocoacmr/assets/temp/openCocoa")
+
+Map.addLayer(agroforestry,{min:0,max:100,palette:"white,yellow,orange,red,purple"},"agro forestry cocoa")
+Map.addLayer(openCocoa,{min:0,max:100,palette:"white,yellow,orange,red,purple"},"open sun cocoa")
+
+// Use same 5-color palette
+var palette = ['yellow','orange','red','darkred','purple','blue',"cyan"];
+
+// pre 2020 loss
+var pre2020 = ee.Image("projects/ee-cocoacmr/assets/outputs/CMR_2020disturbanceMask");
+Map.addLayer(pre2020, {min:0, max:1}, 'pre 2020 disturbance')
+// post 2020 loss
+var post2020 = ee.Image("projects/ee-cocoacmr/assets/outputs/CMR_2025disturbanceMask").eq(1).and(pre2020.neq(1)).and(TNT2020.eq(1))
+Map.addLayer(post2020,{min:0, max:1}, 'post 2020 disturbance')
+
+var defpost2020 = deforestation.mosaic().select('lossyear_mmu').gt(2020)
+Map.addLayer(defpost2020,{}, 'def post 2020')
+var bnnMap = ee.Image("projects/ee-cocoacmr/assets/temp/bnnCocoa2020")
+
+var prob = bnnMap.select("b1").divide(100);
+var uncert = bnnMap.select("b2").divide(30);
+
+var highCert = prob.multiply(ee.Image(1).subtract(uncert));
+var highUncert = prob.multiply(uncert);
+
+Map.addLayer(highCert.selfMask(), {min:0.1, max:0.6, palette:["white","yellow","orange","red","purple"]}, "High certainty");
+Map.addLayer(highUncert.selfMask(), {min:0.1, max:0.6, palette:["white","yellow","orange","red","purple"]}, "High uncertainty");
+
+//4 areas with low probability of cocoa and high certainty and change after 2020 = high risk of non-compliance do not clear
+//3 areas with high probability of cocoa and change after 2020 = med risk 
+//2 areas with high probability of cocoa and change before 2020 = low risk cocoa
+//1- areas with low probability of cocoa and change before 2020 = low risk already agriculture
+
+var high_risk_cocoa = agroforestry.lt(20).and(TNT2020.eq(1)).and(post2020).eq(1)
+Map.addLayer(high_risk_cocoa, {}, 'high risk')
